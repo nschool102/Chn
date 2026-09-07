@@ -34,6 +34,14 @@
   let ALL_WORDS = [];
   let MASTERY_MAX = 5;
 
+  // Chuẩn hóa Unicode (NFC) + cắt khoảng trắng thừa, phòng trường hợp
+  // dữ liệu trong Sheet có dấu tiếng Việt ở dạng tổ hợp khác hoặc dư dấu cách.
+  function normStr(s) {
+    return (s || "").toString().normalize("NFC").trim();
+  }
+  function getLevel(w) { return normStr(w[FIELD.LEVEL]); }
+  function getTopic(w) { return normStr(w[FIELD.TOPIC]); }
+
   // ================= DOM =================
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -96,9 +104,22 @@
     els.dataStatus.textContent = "Đang tải…";
     try {
       const json = await apiGet();
-      ALL_WORDS = json.rows || [];
+      ALL_WORDS = (json.rows || []).map((row) => {
+        const obj = {};
+        Object.keys(row).forEach((k) => {
+          obj[normStr(k)] = row[k];
+        });
+        return obj;
+      });
       MASTERY_MAX = json.masteryMax || 5;
+      if (ALL_WORDS.length && !ALL_WORDS.some((w) => getTopic(w))) {
+        console.warn("Không tìm thấy giá trị nào ở cột CHỦ ĐỀ. Kiểm tra lại tên cột trong Sheet.");
+      }
       els.dataStatus.textContent = `${ALL_WORDS.length} từ đã tải`;
+      if (ALL_WORDS.length && !ALL_WORDS.some((w) => getTopic(w))) {
+        const foundHeaders = Object.keys(ALL_WORDS[0]).join(", ");
+        showToast("Không đọc được cột CHỦ ĐỀ. Tên cột thực tế: " + foundHeaders);
+      }
       populateFilters();
       buildFlashcardDeck();
       if (showLoadingToast) showToast("Đã cập nhật dữ liệu mới nhất");
@@ -112,7 +133,7 @@
 
   // ================= Filters =================
   function populateFilters() {
-    const levels = [...new Set(ALL_WORDS.map((w) => w[FIELD.LEVEL]).filter(Boolean))].sort();
+    const levels = [...new Set(ALL_WORDS.map(getLevel).filter(Boolean))].sort();
     const prevLevel = els.levelFilter.value;
     els.levelFilter.innerHTML = "";
     const allOpt = document.createElement("option");
@@ -131,8 +152,8 @@
 
   function populateTopics() {
     const level = els.levelFilter.value || "all";
-    const pool = level === "all" ? ALL_WORDS : ALL_WORDS.filter((w) => w[FIELD.LEVEL] === level);
-    const topics = [...new Set(pool.map((w) => w[FIELD.TOPIC]).filter(Boolean))].sort();
+    const pool = level === "all" ? ALL_WORDS : ALL_WORDS.filter((w) => getLevel(w) === level);
+    const topics = [...new Set(pool.map(getTopic).filter(Boolean))].sort();
     const prevTopic = els.topicFilter.value;
     els.topicFilter.innerHTML = "";
     const allOpt = document.createElement("option");
@@ -152,8 +173,8 @@
     const level = els.levelFilter.value || "all";
     const topic = els.topicFilter.value || "all";
     return ALL_WORDS.filter((w) => {
-      if (level !== "all" && w[FIELD.LEVEL] !== level) return false;
-      if (topic !== "all" && w[FIELD.TOPIC] !== topic) return false;
+      if (level !== "all" && getLevel(w) !== level) return false;
+      if (topic !== "all" && getTopic(w) !== topic) return false;
       return true;
     });
   }
