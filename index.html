@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>学HSK · Flashcard &amp; Kiểm tra</title>
+<meta name="theme-color" content="#B23434">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700;900&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- SETUP MODAL -->
+<div class="modal-overlay" id="setupModal">
+  <div class="modal">
+    <div class="brand-seal lg">习</div>
+    <h2>Kết nối tới Google Sheet</h2>
+    <p class="modal-desc">Dán URL Apps Script Web App bạn đã deploy từ Sheet "HSK" vào đây. Xem hướng dẫn trong file <b>backend-apps-script.gs.txt</b> đi kèm.</p>
+    <input type="text" id="apiUrlInput" class="text-input" placeholder="https://script.google.com/macros/s/…/exec">
+    <button class="primary-btn" id="saveApiUrlBtn">Lưu &amp; Kết nối</button>
+    <p class="modal-error" id="setupError"></p>
+  </div>
+</div>
+
+<div class="app hidden" id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-seal">习</span>
+      <div class="brand-text">
+        <h1>Học HSK</h1>
+        <p id="dataStatus">Đang tải…</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="refreshBtn" aria-label="Làm mới dữ liệu">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+      <button class="icon-btn" id="settingsBtn" aria-label="Cài đặt">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="filter-row">
+    <select id="levelFilter" class="chip-select"></select>
+    <select id="topicFilter" class="chip-select"></select>
+  </div>
+
+  <label class="pinyin-toggle">
+    <input type="checkbox" id="pinyinToggle" checked>
+    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    <span class="toggle-label">Bao gồm Pinyin trong flashcard</span>
+  </label>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="card">Flashcard</button>
+    <button class="tab" data-view="quiz">Kiểm tra</button>
+  </nav>
+
+  <!-- FLASHCARD VIEW -->
+  <section class="view" id="view-card">
+    <div class="filter-row">
+      <button class="chip-btn" id="shuffleBtn">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M4 4l5 5M9 15l-5 5"/></svg>
+        Xáo trộn &amp; đổi kiểu thẻ
+      </button>
+    </div>
+    <p class="progress-label" id="cardProgressLabel">0 / 0</p>
+
+    <div class="deck" id="deck">
+      <div class="card" id="flashcard">
+        <div class="card-face card-front">
+          <span class="format-tag" id="frontTag">TỪ VỰNG</span>
+          <div class="hanzi-display" id="frontText">…</div>
+          <p class="tap-hint">Chạm để xem mặt sau</p>
+        </div>
+        <div class="card-face card-back">
+          <span class="format-tag" id="backTag">NGHĨA</span>
+          <div class="hanzi-small" id="backText">…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls controls-2">
+      <button class="ctrl-btn ctrl-prev" id="prevBtn" aria-label="Thẻ trước">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <button class="ctrl-btn ctrl-next-wide" id="nextBtn">Thẻ tiếp theo</button>
+    </div>
+  </section>
+
+  <!-- QUIZ VIEW -->
+  <section class="view hidden" id="view-quiz">
+
+    <div class="quiz-start" id="quizStart">
+      <p class="quiz-hint">Kiểm tra sẽ chỉ dùng <b>1 chủ đề</b> đang chọn ở trên. Trả lời đúng → cột THUỘC RỒI +1. Đạt 5 thì coi như đã thuộc.</p>
+      <button class="primary-btn" id="startQuizBtn">Bắt đầu kiểm tra</button>
+      <p class="modal-error" id="quizStartError"></p>
+    </div>
+
+    <div class="quiz-session hidden" id="quizSession">
+      <p class="progress-label" id="quizProgressLabel">Còn lại: 0 · Đúng: 0</p>
+
+      <div class="quiz-card" id="quizCard">
+        <span class="format-tag" id="quizPromptTag">TỪ VỰNG</span>
+        <div class="hanzi-display" id="quizPromptText">…</div>
+      </div>
+
+      <div class="quiz-answers" id="quizAnswers">
+        <!-- input fields injected by JS depending on question type -->
+      </div>
+
+      <button class="primary-btn" id="submitAnswerBtn">Kiểm tra</button>
+
+      <div class="quiz-feedback hidden" id="quizFeedback">
+        <p class="feedback-verdict" id="feedbackVerdict"></p>
+        <p class="feedback-correct" id="feedbackCorrect"></p>
+        <button class="primary-btn" id="nextQuestionBtn">Câu tiếp theo</button>
+      </div>
+    </div>
+
+    <div class="quiz-done hidden" id="quizDone">
+      <div class="brand-seal lg ok">✓</div>
+      <h2 id="quizDoneTitle">Hoàn thành!</h2>
+      <p id="quizDoneDesc"></p>
+      <button class="primary-btn" id="quizRestartBtn">Về màn hình bắt đầu</button>
+    </div>
+  </section>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

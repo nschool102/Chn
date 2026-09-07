@@ -1,0 +1,15 @@
+{
+  "name": "Học HSK - Flashcard & Kiểm tra",
+  "short_name": "HSK Học",
+  "description": "Học từ vựng và ví dụ HSK bằng flashcard, kiểm tra và theo dõi tiến độ trên Google Sheet",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F7F3E9",
+  "theme_color": "#B23434",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
