@@ -6,16 +6,16 @@
   let API_URL = localStorage.getItem(CONFIG_KEY) || "";
 
   const FIELD = {
-    LEVEL: "CẤP ĐỘ",
-    STT: "STT",
-    WORD: "TỪ VỰNG",
+    LEVEL: "LEVEL",
+    STT: "No.",
+    WORD: "VOCAB",
     PINYIN: "PINYIN",
-    MEANING: "NGHĨA",
-    TOPIC: "CHỦ ĐỀ",
-    EXAMPLE: "VÍ DỤ",
-    EXAMPLE_PINYIN: "PINYIN VÍ DỤ",
-    EXAMPLE_MEANING: "NGHĨA VÍ DỤ",
-    MASTERY: "THUỘC RỒI",
+    MEANING: "MEANING",
+    TOPIC: "TOPIC",
+    EXAMPLE: "EXAMPLE",
+    EXAMPLE_PINYIN: "EXAMPLE PINYIN",
+    EXAMPLE_MEANING: "EXAMPLE MEANING",
+    MASTERY: "OK",
   };
 
   const FORMATS_WITH_PINYIN = [
@@ -34,8 +34,19 @@
   let ALL_WORDS = [];
   let MASTERY_MAX = 5;
 
-  // Chuẩn hóa Unicode (NFC) + cắt khoảng trắng thừa, phòng trường hợp
-  // dữ liệu trong Sheet có dấu tiếng Việt ở dạng tổ hợp khác hoặc dư dấu cách.
+  // So khớp tên cột kiểu "khoan dung": bỏ dấu tiếng Việt, không phân biệt
+  // hoa/thường, bỏ khoảng trắng thừa. Nhờ vậy dù cột trong Sheet ghi
+  // "Từ vựng", "TỪ VỰNG ", hay dùng font gõ dấu khác cũng vẫn nhận ra.
+  function stripDiacritics(s) {
+    return (s || "")
+      .toString()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/gi, "d");
+  }
+  function keyNorm(s) {
+    return stripDiacritics(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
   function normStr(s) {
     return (s || "").toString().normalize("NFC").trim();
   }
@@ -104,22 +115,41 @@
     els.dataStatus.textContent = "Đang tải…";
     try {
       const json = await apiGet();
-      ALL_WORDS = (json.rows || []).map((row) => {
+      const rawRows = json.rows || [];
+      const rawHeaders = json.headers && json.headers.length
+        ? json.headers
+        : (rawRows[0] ? Object.keys(rawRows[0]) : []);
+
+      // Ánh xạ mỗi tên cột "chuẩn" (FIELD.*) tới tên cột thật tìm thấy trong Sheet
+      const canonicalNames = Object.values(FIELD);
+      const headerMap = {}; // canonical -> actual header key in the raw data
+      const unmatched = [];
+      canonicalNames.forEach((canon) => {
+        const target = keyNorm(canon);
+        const found = rawHeaders.find((h) => keyNorm(h) === target);
+        if (found) headerMap[canon] = found;
+        else unmatched.push(canon);
+      });
+
+      ALL_WORDS = rawRows.map((row) => {
         const obj = {};
-        Object.keys(row).forEach((k) => {
-          obj[normStr(k)] = row[k];
+        canonicalNames.forEach((canon) => {
+          const actualKey = headerMap[canon];
+          obj[canon] = actualKey ? row[actualKey] : "";
         });
+        obj._row = row._row;
         return obj;
       });
+
       MASTERY_MAX = json.masteryMax || 5;
+
+      if (unmatched.length) {
+        showToast("Không tìm thấy cột: " + unmatched.join(", ") + ". Cột có trong Sheet: " + rawHeaders.join(", "));
+      }
       if (ALL_WORDS.length && !ALL_WORDS.some((w) => getTopic(w))) {
         console.warn("Không tìm thấy giá trị nào ở cột CHỦ ĐỀ. Kiểm tra lại tên cột trong Sheet.");
       }
       els.dataStatus.textContent = `${ALL_WORDS.length} từ đã tải`;
-      if (ALL_WORDS.length && !ALL_WORDS.some((w) => getTopic(w))) {
-        const foundHeaders = Object.keys(ALL_WORDS[0]).join(", ");
-        showToast("Không đọc được cột CHỦ ĐỀ. Tên cột thực tế: " + foundHeaders);
-      }
       populateFilters();
       buildFlashcardDeck();
       if (showLoadingToast) showToast("Đã cập nhật dữ liệu mới nhất");

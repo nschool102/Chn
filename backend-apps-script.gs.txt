@@ -21,8 +21,25 @@
 
 var SPREADSHEET_ID = '183NqZLUSQvN81Vuni4sBLKy1f7g4VVFSWYToYuH5rhc';
 var SHEET_NAME = 'HSK';
-var MASTERY_COL_NAME = 'THUỘC RỒI';
+// Chấp nhận cả tên cột tiếng Anh lẫn tiếng Việt cũ - phòng khi đổi tên cột sau này
+var MASTERY_COL_ALIASES = ['OK', 'THUỘC RỒI'];
 var MASTERY_MAX = 5;
+
+function _stripDiacritics(s) {
+  return (s || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd');
+}
+function _keyNorm(s) {
+  return _stripDiacritics(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+function _findMasteryCol(headers) {
+  for (var i = 0; i < headers.length; i++) {
+    var norm = _keyNorm(headers[i]);
+    for (var j = 0; j < MASTERY_COL_ALIASES.length; j++) {
+      if (norm === _keyNorm(MASTERY_COL_ALIASES[j])) return i + 1; // 1-based column
+    }
+  }
+  return 0;
+}
 
 function _getSheet() {
   return SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
@@ -61,8 +78,8 @@ function doPost(e) {
     var action = body.action;
     var sheet = _getSheet();
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    var masteryCol = headers.indexOf(MASTERY_COL_NAME) + 1;
-    if (masteryCol === 0) throw new Error('Không tìm thấy cột ' + MASTERY_COL_NAME);
+    var masteryCol = _findMasteryCol(headers);
+    if (masteryCol === 0) throw new Error('Không tìm thấy cột điểm thuộc (OK / THUỘC RỒI)');
 
     if (action === 'incrementMastery') {
       var row = Number(body.row);
