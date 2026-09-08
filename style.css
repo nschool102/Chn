@@ -129,6 +129,14 @@ input, select { font-family: inherit; }
   border-radius: 999px; letter-spacing: 0.02em;
 }
 
+.stamp {
+  position: absolute; top: 12px; right: 12px; width: 40px; height: 40px;
+  border-radius: 10px; background: var(--seal); color: var(--paper);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 3px 8px rgba(178,52,52,0.35); z-index: 2;
+}
+.stamp:active { background: var(--seal-deep); transform: scale(0.94); }
+
 .hanzi-display {
   font-family: var(--font-display); font-weight: 700; font-size: 56px; line-height: 1.25;
   color: var(--ink); max-width: 100%; word-break: break-word;
@@ -146,6 +154,10 @@ input, select { font-family: inherit; }
 .ctrl-prev:active { background: var(--line); }
 .ctrl-next-wide { background: var(--seal); color: var(--paper); }
 .ctrl-next-wide:active { background: var(--seal-deep); }
+.ctrl-unknown { background: rgba(178,52,52,0.1); color: var(--seal-deep); }
+.ctrl-unknown:active { background: rgba(178,52,52,0.2); }
+.ctrl-known { background: rgba(78,107,88,0.12); color: var(--jade-deep); }
+.ctrl-known:active { background: rgba(78,107,88,0.22); }
 
 /* ---- Modal ---- */
 .modal-overlay {
@@ -190,6 +202,44 @@ input, select { font-family: inherit; }
 .feedback-verdict.incorrect { color: var(--seal-deep); }
 .feedback-correct { font-size: 13px; color: var(--ink-soft); margin: 0 0 16px; line-height: 1.6; }
 
+/* ---- Handwriting pad ---- */
+.handwrite-pad-wrap { display: flex; flex-direction: column; gap: 8px; }
+.handwrite-canvas {
+  width: 100%; height: 170px; display: block;
+  border: 1px solid var(--line); border-radius: 14px;
+  background: #FFFDF8; touch-action: none; cursor: crosshair;
+}
+.ghost-btn {
+  align-self: flex-end; font-size: 12px; font-weight: 600; color: var(--ink-soft);
+  background: var(--paper-deep); border-radius: 10px; padding: 7px 14px;
+}
+.ghost-btn:active { background: var(--line); }
+.stroke-counter { font-size: 12px; color: var(--ink-soft); margin: 2px 0 0; text-align: center; }
+.stroke-counter.insufficient { color: var(--seal-deep); font-weight: 600; }
+
+/* ---- HanziWriter stroke-recognition quiz ---- */
+.hanzi-quiz-row {
+  display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 10px;
+}
+.hanzi-quiz-target {
+  width: 84px; height: 84px; border: 1px solid var(--line); border-radius: 12px;
+  background: #FFFDF8; touch-action: none;
+}
+.hanzi-quiz-target.done { border-color: var(--jade); box-shadow: 0 0 0 2px rgba(78,107,88,0.25) inset; }
+.hanzi-quiz-status { text-align: center; font-size: 12px; color: var(--ink-soft); margin: 0 0 12px; }
+.hanzi-quiz-controls { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; }
+.hanzi-quiz-controls .ghost-btn { align-self: center; }
+
+/* ---- Self-grade panel ---- */
+.self-grade { margin-bottom: 14px; text-align: center; }
+.self-grade-label { font-size: 12px; color: var(--ink-soft); font-weight: 600; margin: 0 0 4px; }
+.self-grade-answer {
+  font-family: var(--font-display); font-weight: 700; font-size: 32px;
+  color: var(--ink); margin: 0 0 6px; word-break: break-word;
+}
+.self-grade-hint { font-size: 12px; color: var(--ink-soft); margin: 0 0 14px; }
+.self-grade-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
 .quiz-done { text-align: center; padding: 40px 10px; }
 .quiz-done h2 { font-size: 19px; margin: 0 0 8px; }
 .quiz-done p { font-size: 13px; color: var(--ink-soft); margin: 0 0 22px; }
@@ -204,4 +254,51 @@ input, select { font-family: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   .card, .toast { transition: none; }
+}
+
+/* =========================================================
+   Tối ưu cho iPad mini 6 (744×1133) & iPad Air 5 (820×1180)
+   chạy ở chế độ toàn màn hình (Add to Home Screen / standalone)
+   ========================================================= */
+@media (min-width: 700px) {
+  .app { max-width: 760px; padding: max(28px, env(safe-area-inset-top)) 40px 48px; }
+
+  .brand-seal { width: 48px; height: 48px; border-radius: 12px; font-size: 24px; }
+  .brand-text h1 { font-size: 20px; }
+  .brand-text p { font-size: 13px; }
+  .icon-btn { width: 44px; height: 44px; }
+
+  .chip-select, .search-input, .chip-btn, .text-input { font-size: 15px; padding: 13px 16px; }
+  .tab { padding: 13px 0; font-size: 16px; }
+  .pinyin-toggle { font-size: 14px; gap: 12px; }
+  .toggle-track { width: 46px; height: 26px; }
+  .toggle-thumb { width: 22px; height: 22px; }
+  .pinyin-toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(20px); }
+
+  .card { height: 460px; }
+  .format-tag { font-size: 12px; padding: 6px 13px; top: 20px; left: 20px; }
+  .stamp { width: 46px; height: 46px; top: 16px; right: 16px; }
+  .tap-hint { font-size: 14px; margin-top: 22px; }
+  .hanzi-small { font-size: 28px; }
+
+  .primary-btn, .ctrl-btn { padding: 17px 0; font-size: 16px; border-radius: 16px; }
+  .progress-label { font-size: 13px; }
+
+  .quiz-card { padding: 56px 32px; }
+  .quiz-hint { font-size: 14px; }
+  .handwrite-canvas { height: 320px; }
+  .hanzi-quiz-target { width: 116px; height: 116px; }
+  .self-grade-answer { font-size: 40px; }
+  .self-grade-hint { font-size: 13px; }
+
+  .modal { max-width: 440px; padding: 36px 32px; }
+  .modal h2 { font-size: 21px; }
+  .modal-desc { font-size: 14px; }
+}
+
+/* Landscape trên iPad: rộng hơn portrait, cho phép nội dung "thở" hơn 1 chút */
+@media (min-width: 1000px) and (orientation: landscape) {
+  .app { max-width: 840px; }
+  .card { height: 420px; }
+  .handwrite-canvas { height: 300px; }
 }

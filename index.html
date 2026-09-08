@@ -9,6 +9,9 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="HSK Học">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700;900&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -59,6 +62,12 @@
     <span class="toggle-label">Bao gồm Pinyin trong flashcard</span>
   </label>
 
+  <label class="pinyin-toggle">
+    <input type="checkbox" id="handwriteToggle">
+    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    <span class="toggle-label">Viết tay bằng nét vẽ khi cần gõ chữ Hán (hợp iPad/Apple Pencil)</span>
+  </label>
+
   <nav class="tabs" id="tabs">
     <button class="tab active" data-view="card">Flashcard</button>
     <button class="tab" data-view="quiz">Kiểm tra</button>
@@ -78,11 +87,17 @@
       <div class="card" id="flashcard">
         <div class="card-face card-front">
           <span class="format-tag" id="frontTag">TỪ VỰNG</span>
+          <button class="stamp" id="speakFrontBtn" aria-label="Phát âm">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+          </button>
           <div class="hanzi-display" id="frontText">…</div>
           <p class="tap-hint">Chạm để xem mặt sau</p>
         </div>
         <div class="card-face card-back">
           <span class="format-tag" id="backTag">NGHĨA</span>
+          <button class="stamp" id="speakBackBtn" aria-label="Phát âm">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+          </button>
           <div class="hanzi-small" id="backText">…</div>
         </div>
       </div>
@@ -100,7 +115,7 @@
   <section class="view hidden" id="view-quiz">
 
     <div class="quiz-start" id="quizStart">
-      <p class="quiz-hint">Kiểm tra sẽ chỉ dùng <b>1 chủ đề</b> đang chọn ở trên. Trả lời đúng → cột THUỘC RỒI +1. Đạt 5 thì coi như đã thuộc.</p>
+      <p class="quiz-hint">Kiểm tra sẽ chỉ dùng <b>1 chủ đề</b> đang chọn ở trên, gồm cả dạng <b>nghe và gõ lại</b>. Trả lời đúng → cột OK +1. Đạt 5 thì coi như đã thuộc.</p>
       <button class="primary-btn" id="startQuizBtn">Bắt đầu kiểm tra</button>
       <p class="modal-error" id="quizStartError"></p>
     </div>
@@ -110,11 +125,24 @@
 
       <div class="quiz-card" id="quizCard">
         <span class="format-tag" id="quizPromptTag">TỪ VỰNG</span>
+        <button class="stamp hidden" id="quizSpeakBtn" aria-label="Phát lại âm thanh">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+        </button>
         <div class="hanzi-display" id="quizPromptText">…</div>
       </div>
 
       <div class="quiz-answers" id="quizAnswers">
-        <!-- input fields injected by JS depending on question type -->
+        <!-- input fields hoặc bảng vẽ chữ được JS chèn tùy loại câu hỏi -->
+      </div>
+
+      <div class="self-grade hidden" id="selfGradePanel">
+        <p class="self-grade-label">Đáp án đúng:</p>
+        <p class="self-grade-answer" id="selfGradeAnswer"></p>
+        <p class="self-grade-hint">So với nét bạn vừa viết — đúng ý là được, chữ xấu không sao.</p>
+        <div class="self-grade-buttons">
+          <button class="ctrl-btn ctrl-unknown" id="selfIncorrectBtn">Tôi viết sai</button>
+          <button class="ctrl-btn ctrl-known" id="selfCorrectBtn">Tôi viết đúng</button>
+        </div>
       </div>
 
       <button class="primary-btn" id="submitAnswerBtn">Kiểm tra</button>
@@ -138,6 +166,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/hanzi-writer@3.7/dist/hanzi-writer.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

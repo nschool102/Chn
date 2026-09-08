@@ -61,16 +61,20 @@
     app: $("app"), dataStatus: $("dataStatus"),
     refreshBtn: $("refreshBtn"), settingsBtn: $("settingsBtn"),
     levelFilter: $("levelFilter"), topicFilter: $("topicFilter"),
-    pinyinToggle: $("pinyinToggle"), tabs: $("tabs"),
+    pinyinToggle: $("pinyinToggle"), handwriteToggle: $("handwriteToggle"), tabs: $("tabs"),
     viewCard: $("view-card"), viewQuiz: $("view-quiz"),
     shuffleBtn: $("shuffleBtn"), cardProgressLabel: $("cardProgressLabel"),
     flashcard: $("flashcard"), frontTag: $("frontTag"), frontText: $("frontText"),
     backTag: $("backTag"), backText: $("backText"),
+    speakFrontBtn: $("speakFrontBtn"), speakBackBtn: $("speakBackBtn"),
     prevBtn: $("prevBtn"), nextBtn: $("nextBtn"),
     quizStart: $("quizStart"), quizStartError: $("quizStartError"), startQuizBtn: $("startQuizBtn"),
     quizSession: $("quizSession"), quizProgressLabel: $("quizProgressLabel"),
     quizPromptTag: $("quizPromptTag"), quizPromptText: $("quizPromptText"),
+    quizSpeakBtn: $("quizSpeakBtn"),
     quizAnswers: $("quizAnswers"), submitAnswerBtn: $("submitAnswerBtn"),
+    selfGradePanel: $("selfGradePanel"), selfGradeAnswer: $("selfGradeAnswer"),
+    selfCorrectBtn: $("selfCorrectBtn"), selfIncorrectBtn: $("selfIncorrectBtn"),
     quizFeedback: $("quizFeedback"), feedbackVerdict: $("feedbackVerdict"),
     feedbackCorrect: $("feedbackCorrect"), nextQuestionBtn: $("nextQuestionBtn"),
     quizDone: $("quizDone"), quizDoneTitle: $("quizDoneTitle"), quizDoneDesc: $("quizDoneDesc"),
@@ -83,6 +87,323 @@
     els.toast.classList.add("show");
     clearTimeout(showToast._t);
     showToast._t = setTimeout(() => els.toast.classList.remove("show"), 2200);
+  }
+
+  // ================= Text-to-speech =================
+  let zhVoice = null;
+  function pickVoice() {
+    if (!("speechSynthesis" in window)) return;
+    const voices = speechSynthesis.getVoices();
+    zhVoice =
+      voices.find((v) => v.lang === "zh-CN") ||
+      voices.find((v) => v.lang && v.lang.startsWith("zh")) ||
+      null;
+  }
+  if ("speechSynthesis" in window) {
+    pickVoice();
+    speechSynthesis.onvoiceschanged = pickVoice;
+  }
+
+  function speak(text) {
+    if (!text) return;
+    if (!("speechSynthesis" in window)) {
+      showToast("Trình duyệt không hỗ trợ phát âm");
+      return;
+    }
+    speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "zh-CN";
+    utter.rate = 0.85;
+    if (zhVoice) utter.voice = zhVoice;
+    speechSynthesis.speak(utter);
+  }
+
+  // Với 1 mặt thẻ (front/back là tên field), chọn đúng đoạn tiếng Trung cần đọc:
+  // field thuộc nhóm ví dụ -> đọc câu ví dụ; còn lại -> đọc từ vựng.
+  function audioTextForField(word, field) {
+    if (field === FIELD.EXAMPLE || field === FIELD.EXAMPLE_PINYIN || field === FIELD.EXAMPLE_MEANING) {
+      return (word[FIELD.EXAMPLE] || "").toString().trim();
+    }
+    return (word[FIELD.WORD] || "").toString().trim();
+  }
+
+  // ================= Handwriting pad (vẽ chữ Hán bằng bút/ngón tay) =================
+  const HANDWRITE_KEY = "hsk-app-handwrite";
+  els.handwriteToggle.checked = localStorage.getItem(HANDWRITE_KEY) === "1";
+  els.handwriteToggle.addEventListener("change", () => {
+    localStorage.setItem(HANDWRITE_KEY, els.handwriteToggle.checked ? "1" : "0");
+  });
+
+  function charCountFor(text) {
+    return (text || "").toString().trim().length || 1;
+  }
+
+  function handwritePadHtml(canvasId) {
+    return `
+      <div class="handwrite-pad-wrap">
+        <canvas class="handwrite-canvas" id="${canvasId}"></canvas>
+        <p class="stroke-counter" id="${canvasId}-counter">Đã viết: 0 nét</p>
+        <button type="button" class="ghost-btn" data-clear-for="${canvasId}">Xóa nét vẽ</button>
+      </div>`;
+  }
+
+  function drawGuide(ctx, w, h, charCount) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    ctx.strokeStyle = "rgba(178,52,52,0.32)";
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+    if (charCount > 0 && charCount <= 8) {
+      const boxW = w / charCount;
+      for (let i = 1; i < charCount; i++) {
+        ctx.beginPath();
+        ctx.moveTo(boxW * i, 0);
+        ctx.lineTo(boxW * i, h);
+        ctx.stroke();
+      }
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(0, h * 0.72);
+      ctx.lineTo(w, h * 0.72);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Gắn Pointer Events (chuột/ngón tay/Apple Pencil đều dùng chung API này) lên canvas.
+  // Đồng thời đếm số nét (mỗi lần nhấc bút = 1 nét) và tổng độ dài mực đã vẽ,
+  // dùng làm ngưỡng chặn kiểu "vẽ nguệch ngoạc rồi bấm đúng".
+  function initHandwriteCanvas(canvasEl, charCount, onChange) {
+    const dpr = window.devicePixelRatio || 1;
+    let ctx;
+    function resize() {
+      const cssW = canvasEl.clientWidth || 300;
+      const cssH = canvasEl.clientHeight || 170;
+      canvasEl.width = Math.max(1, Math.round(cssW * dpr));
+      canvasEl.height = Math.max(1, Math.round(cssH * dpr));
+      ctx = canvasEl.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawGuide(ctx, cssW, cssH, charCount);
+      ctx.lineWidth = 5;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "#2B2622";
+      canvasEl._strokeCount = 0;
+      canvasEl._inkLength = 0;
+      if (onChange) onChange(0, 0);
+    }
+    resize();
+
+    let drawing = false;
+    let last = null;
+    let movedThisStroke = false;
+    function getPos(e) {
+      const rect = canvasEl.getBoundingClientRect();
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+    function down(e) {
+      drawing = true;
+      movedThisStroke = false;
+      last = getPos(e);
+      if (canvasEl.setPointerCapture) {
+        try { canvasEl.setPointerCapture(e.pointerId); } catch (err) {}
+      }
+      e.preventDefault();
+    }
+    function move(e) {
+      if (!drawing) return;
+      const p = getPos(e);
+      const dx = p.x - last.x;
+      const dy = p.y - last.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 1) {
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        canvasEl._inkLength += dist;
+        movedThisStroke = true;
+        last = p;
+      }
+      e.preventDefault();
+    }
+    function up() {
+      if (drawing && movedThisStroke) {
+        canvasEl._strokeCount += 1;
+        if (onChange) onChange(canvasEl._strokeCount, canvasEl._inkLength);
+      }
+      drawing = false;
+    }
+
+    canvasEl.addEventListener("pointerdown", down);
+    canvasEl.addEventListener("pointermove", move);
+    canvasEl.addEventListener("pointerup", up);
+    canvasEl.addEventListener("pointerleave", up);
+    canvasEl.addEventListener("pointercancel", up);
+
+    canvasEl._clearHandwrite = resize;
+  }
+
+  // Ngưỡng tối thiểu "chấp nhận được" cho 1 lượt viết tay: không phải nhận
+  // diện nét đúng/sai thật sự (không có OCR), chỉ chặn kiểu vẽ 1 nét nguệch
+  // ngoạc qua loa rồi tự nhận là đúng.
+  function handwriteThreshold(charCount) {
+    return {
+      minStrokes: Math.max(2, charCount),
+      minLength: charCount * 45,
+    };
+  }
+
+  // Chèn bảng vẽ vào 1 container, tự dò kích thước sau khi đã nằm trong DOM.
+  // Trả về hàm kiểm tra "đã viết đủ chưa" để dùng khi bấm Xem đáp án.
+  function mountHandwritePad(container, canvasId, charCount) {
+    const canvasEl = container.querySelector("#" + canvasId);
+    const counterEl = container.querySelector("#" + canvasId + "-counter");
+    if (!canvasEl) return () => true;
+    const threshold = handwriteThreshold(charCount);
+
+    function updateCounter(strokes) {
+      if (!counterEl) return;
+      const ok = strokes >= threshold.minStrokes;
+      counterEl.textContent = `Đã viết: ${strokes} nét (tối thiểu ~${threshold.minStrokes} nét cho ${charCount} chữ)`;
+      counterEl.classList.toggle("insufficient", !ok && strokes > 0);
+    }
+
+    requestAnimationFrame(() => {
+      initHandwriteCanvas(canvasEl, charCount, (strokes) => updateCounter(strokes));
+    });
+    const clearBtn = container.querySelector('[data-clear-for="' + canvasId + '"]');
+    if (clearBtn) clearBtn.addEventListener("click", () => canvasEl._clearHandwrite && canvasEl._clearHandwrite());
+
+    return function isSufficient() {
+      const strokes = canvasEl._strokeCount || 0;
+      const length = canvasEl._inkLength || 0;
+      return strokes >= threshold.minStrokes && length >= threshold.minLength;
+    };
+  }
+
+  // ================= HanziWriter (nhận diện nét vẽ thật, miễn phí, chạy trong trình duyệt) =================
+  // Thư viện mã nguồn mở hanzi-writer (MIT) có sẵn dữ liệu nét chuẩn cho hàng
+  // nghìn chữ Hán và biết chấm đúng/sai từng nét (đúng hướng, đúng thứ tự) —
+  // không cần API key, không tốn phí. Nếu thư viện không tải được (offline)
+  // hoặc dữ liệu 1 ký tự nào đó lỗi, tự động rơi về bảng vẽ tự chấm ở trên.
+  const HANZI_WRITER_READY = typeof window.HanziWriter !== "undefined";
+
+  function charsOf(text) {
+    return Array.from((text || "").toString().trim());
+  }
+
+  function renderHanziQuizHtml(chars) {
+    const boxes = chars.map((c, i) => `<div class="hanzi-quiz-target" id="hzTarget-${i}"></div>`).join("");
+    return `
+      <div class="hanzi-quiz-row" id="hanziQuizRow">${boxes}</div>
+      <p class="hanzi-quiz-status" id="hanziQuizStatus">Viết từng nét theo đúng thứ tự — chữ xấu không sao, miễn đúng nét.</p>
+      <div class="hanzi-quiz-controls">
+        <button type="button" class="ghost-btn" id="hanziHintBtn">Gợi ý nét</button>
+        <button type="button" class="ghost-btn" id="hanziSkipBtn">Tôi không biết, bỏ qua</button>
+      </div>`;
+  }
+
+  // Gắn HanziWriter cho các ô đã có sẵn trong container (do renderHanziQuizHtml tạo).
+  // cbs: { onComplete(), onSkip(), onLoadError() }
+  function mountHanziQuiz(container, chars, cbs) {
+    let completed = 0;
+    let failed = false;
+    const writers = [];
+    const statusEl = container.querySelector("#hanziQuizStatus");
+
+    function triggerLoadError() {
+      if (failed) return;
+      failed = true;
+      cbs.onLoadError();
+    }
+
+    chars.forEach((ch, i) => {
+      const target = container.querySelector("#hzTarget-" + i);
+      if (!target || failed) return;
+      let writer;
+      try {
+        writer = HanziWriter.create(target, ch, {
+          width: target.clientWidth || 84,
+          height: target.clientHeight || 84,
+          padding: 6,
+          showOutline: true,
+          strokeColor: "#2B2622",
+          outlineColor: "#E4DCC8",
+          highlightColor: "#B23434",
+          drawingWidth: 5,
+          showHintAfterMisses: 3,
+          leniency: 1.3,
+          onLoadCharDataError: triggerLoadError,
+        });
+      } catch (err) {
+        triggerLoadError();
+        return;
+      }
+      writers.push(writer);
+      writer.quiz({
+        onComplete: function () {
+          if (failed) return;
+          completed++;
+          target.classList.add("done");
+          if (statusEl) statusEl.textContent = `Đã viết đúng: ${completed} / ${chars.length} chữ`;
+          if (completed >= chars.length) cbs.onComplete();
+        },
+      });
+    });
+
+    // Lưới an toàn: nếu sau vài giây ô nào đó vẫn trống trơn (dữ liệu không tải
+    // được nhưng callback lỗi không bắn ra vì lý do gì đó), coi như lỗi tải.
+    setTimeout(() => {
+      if (failed || completed >= chars.length) return;
+      const anyEmpty = chars.some((_, i) => {
+        const t = container.querySelector("#hzTarget-" + i);
+        return !t || t.children.length === 0;
+      });
+      if (anyEmpty) triggerLoadError();
+    }, 4000);
+
+    const hintBtn = container.querySelector("#hanziHintBtn");
+    if (hintBtn) {
+      hintBtn.addEventListener("click", () => {
+        if (failed) return;
+        const idx = Math.min(completed, writers.length - 1);
+        if (writers[idx]) writers[idx].animateCharacter();
+      });
+    }
+    const skipBtn = container.querySelector("#hanziSkipBtn");
+    if (skipBtn) {
+      skipBtn.addEventListener("click", () => {
+        if (failed) return;
+        failed = true;
+        cbs.onSkip();
+      });
+    }
+  }
+
+  // Hàm dùng chung cho các câu hỏi chỉ cần viết 1 chuỗi chữ Hán rồi tự động
+  // chấm (không cần bấm nút): thử HanziWriter trước, lỗi thì rơi về canvas.
+  // cbs: { onComplete(), onSkip(), onFallbackCanvas(isSufficientFn) }
+  function setupHandwritingAnswer(container, targetText, cbs) {
+    const chars = charsOf(targetText);
+    if (HANZI_WRITER_READY && chars.length > 0) {
+      container.innerHTML = renderHanziQuizHtml(chars);
+      mountHanziQuiz(container, chars, {
+        onComplete: cbs.onComplete,
+        onSkip: cbs.onSkip,
+        onLoadError: () => {
+          container.innerHTML = handwritePadHtml("hwCanvas");
+          const isSufficient = mountHandwritePad(container, "hwCanvas", charCountFor(targetText));
+          cbs.onFallbackCanvas(isSufficient);
+          showToast("Không tải được dữ liệu nét chữ cho ký tự này, chuyển sang bảng vẽ tự chấm.");
+        },
+      });
+    } else {
+      container.innerHTML = handwritePadHtml("hwCanvas");
+      const isSufficient = mountHandwritePad(container, "hwCanvas", charCountFor(targetText));
+      cbs.onFallbackCanvas(isSufficient);
+    }
   }
 
   // ================= API =================
@@ -238,12 +559,15 @@
     renderCard();
   }
 
+  const isTabletScreen = () => window.matchMedia("(min-width: 700px)").matches;
+
   function fitText(el, text, base) {
     const len = (text || "").length;
-    let size = base;
-    if (len > 10) size = base * 0.75;
-    if (len > 22) size = base * 0.55;
-    if (len > 40) size = base * 0.4;
+    const scaledBase = isTabletScreen() ? Math.round(base * 1.3) : base;
+    let size = scaledBase;
+    if (len > 10) size = scaledBase * 0.75;
+    if (len > 22) size = scaledBase * 0.55;
+    if (len > 40) size = scaledBase * 0.4;
     el.style.fontSize = size + "px";
   }
 
@@ -274,22 +598,14 @@
   }
 
   // ================= Quiz =================
-  const QUIZ_TYPES = ["wordToMeaning", "meaningToWord", "pinyinToBoth"];
+  const QUIZ_TYPES_BASE = ["wordToMeaning", "meaningToWord", "pinyinToBoth", "listenWord"];
   let quizQueue = [];
   let quizCorrectCount = 0;
   let quizTotalCount = 0;
   let currentQuestion = null; // { word, type }
 
-  function stripDiacritics(str) {
-    return str
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/đ/g, "d")
-      .replace(/Đ/g, "D");
-  }
-
   function normalizeLoose(str) {
-    return stripDiacritics(str.toLowerCase().trim().replace(/\s+/g, " "));
+    return stripDiacritics((str || "").toLowerCase().trim().replace(/\s+/g, " "));
   }
 
   function meaningMatches(userInput, correctField) {
@@ -345,7 +661,9 @@
       return;
     }
     const word = quizQueue[0];
-    const type = QUIZ_TYPES[Math.floor(Math.random() * QUIZ_TYPES.length)];
+    const types = QUIZ_TYPES_BASE.slice();
+    if ((word[FIELD.EXAMPLE] || "").toString().trim()) types.push("listenExample");
+    const type = types[Math.floor(Math.random() * types.length)];
     currentQuestion = { word, type };
     renderQuestion();
   }
@@ -353,6 +671,20 @@
   function renderQuestion() {
     const { word, type } = currentQuestion;
     els.quizAnswers.innerHTML = "";
+    els.quizSpeakBtn.classList.add("hidden");
+    els.quizPromptText.classList.remove("hidden");
+    els.selfGradePanel.classList.add("hidden");
+    els.submitAnswerBtn.classList.remove("hidden");
+    els.submitAnswerBtn.textContent = "Kiểm tra";
+    currentQuestion.needsSelfGrade = false;
+    currentQuestion.revealed = false;
+    currentQuestion.pendingMeaningOk = null;
+    currentQuestion.checkHandwriteSufficient = null;
+    currentQuestion.hanziAutoMode = false;
+    currentQuestion.hanziAllCorrect = false;
+
+    const handwrite = els.handwriteToggle.checked;
+
     if (type === "wordToMeaning") {
       els.quizPromptTag.textContent = FIELD.WORD;
       els.quizPromptText.textContent = word[FIELD.WORD];
@@ -364,22 +696,151 @@
       els.quizPromptTag.textContent = FIELD.MEANING;
       els.quizPromptText.textContent = word[FIELD.MEANING];
       fitText(els.quizPromptText, word[FIELD.MEANING], 40);
-      els.quizAnswers.innerHTML = `
-        <label for="ansWord">Gõ lại TỪ VỰNG (chữ Hán)</label>
-        <input type="text" id="ansWord" class="text-input" autocomplete="off">`;
-    } else {
+      if (handwrite) {
+        els.submitAnswerBtn.classList.add("hidden");
+        setupHandwritingAnswer(els.quizAnswers, word[FIELD.WORD], {
+          onComplete: () => finalizeAnswer(word, true, ""),
+          onSkip: () => finalizeAnswer(word, false, `Từ đúng: ${word[FIELD.WORD]} (${word[FIELD.PINYIN]})`),
+          onFallbackCanvas: (isSufficient) => {
+            currentQuestion.needsSelfGrade = true;
+            currentQuestion.checkHandwriteSufficient = isSufficient;
+            els.submitAnswerBtn.textContent = "Xem đáp án";
+            els.submitAnswerBtn.classList.remove("hidden");
+          },
+        });
+      } else {
+        els.quizAnswers.innerHTML = `
+          <label for="ansWord">Gõ lại TỪ VỰNG (chữ Hán)</label>
+          <input type="text" id="ansWord" class="text-input" autocomplete="off">`;
+      }
+    } else if (type === "pinyinToBoth") {
       els.quizPromptTag.textContent = FIELD.PINYIN;
       els.quizPromptText.textContent = word[FIELD.PINYIN];
       fitText(els.quizPromptText, word[FIELD.PINYIN], 40);
-      els.quizAnswers.innerHTML = `
-        <label for="ansWord2">Gõ lại TỪ VỰNG (chữ Hán)</label>
-        <input type="text" id="ansWord2" class="text-input" autocomplete="off">
+      const meaningInputHtml = `
         <label for="ansMeaning2">Gõ lại NGHĨA</label>
         <input type="text" id="ansMeaning2" class="text-input" autocomplete="off">`;
+      if (handwrite && HANZI_WRITER_READY) {
+        currentQuestion.hanziAutoMode = true;
+        const chars = charsOf(word[FIELD.WORD]);
+        els.quizAnswers.innerHTML = renderHanziQuizHtml(chars) + meaningInputHtml;
+        mountHanziQuiz(els.quizAnswers, chars, {
+          onComplete: () => {
+            currentQuestion.hanziAllCorrect = true;
+            showToast("Đã viết đúng chữ Hán — giờ gõ nghĩa rồi bấm Kiểm tra.");
+          },
+          onSkip: () => finalizeAnswer(word, false, `Từ đúng: ${word[FIELD.WORD]} — Nghĩa đúng: ${word[FIELD.MEANING]}`),
+          onLoadError: () => {
+            currentQuestion.hanziAutoMode = false;
+            els.quizAnswers.innerHTML = `
+              <label for="ansWord2">Gõ lại TỪ VỰNG (chữ Hán)</label>
+              <input type="text" id="ansWord2" class="text-input" autocomplete="off">` + meaningInputHtml;
+          },
+        });
+      } else {
+        els.quizAnswers.innerHTML = `
+          <label for="ansWord2">Gõ lại TỪ VỰNG (chữ Hán)</label>
+          <input type="text" id="ansWord2" class="text-input" autocomplete="off">` + meaningInputHtml;
+      }
+    } else if (type === "listenWord") {
+      els.quizPromptTag.textContent = "NGHE TỪ";
+      els.quizPromptText.textContent = "🔊";
+      els.quizPromptText.style.fontSize = (isTabletScreen() ? 64 : 48) + "px";
+      els.quizSpeakBtn.classList.remove("hidden");
+      if (handwrite) {
+        els.submitAnswerBtn.classList.add("hidden");
+        setupHandwritingAnswer(els.quizAnswers, word[FIELD.WORD], {
+          onComplete: () => finalizeAnswer(word, true, ""),
+          onSkip: () => finalizeAnswer(word, false, `Từ đúng: ${word[FIELD.WORD]} (${word[FIELD.PINYIN]}) — ${word[FIELD.MEANING]}`),
+          onFallbackCanvas: (isSufficient) => {
+            currentQuestion.needsSelfGrade = true;
+            currentQuestion.checkHandwriteSufficient = isSufficient;
+            els.submitAnswerBtn.textContent = "Xem đáp án";
+            els.submitAnswerBtn.classList.remove("hidden");
+          },
+        });
+      } else {
+        els.quizAnswers.innerHTML = `
+          <label for="ansListenWord">Gõ lại từ bạn vừa nghe (chữ Hán)</label>
+          <input type="text" id="ansListenWord" class="text-input" autocomplete="off">`;
+      }
+      speak(word[FIELD.WORD]);
+    } else if (type === "listenExample") {
+      els.quizPromptTag.textContent = "NGHE CÂU";
+      els.quizPromptText.textContent = "🔊";
+      els.quizPromptText.style.fontSize = (isTabletScreen() ? 64 : 48) + "px";
+      els.quizSpeakBtn.classList.remove("hidden");
+      if (handwrite) {
+        els.submitAnswerBtn.classList.add("hidden");
+        setupHandwritingAnswer(els.quizAnswers, word[FIELD.EXAMPLE], {
+          onComplete: () => finalizeAnswer(word, true, ""),
+          onSkip: () => finalizeAnswer(word, false, `Câu đúng: ${word[FIELD.EXAMPLE]} (${word[FIELD.EXAMPLE_PINYIN]}) — ${word[FIELD.EXAMPLE_MEANING]}`),
+          onFallbackCanvas: (isSufficient) => {
+            currentQuestion.needsSelfGrade = true;
+            currentQuestion.checkHandwriteSufficient = isSufficient;
+            els.submitAnswerBtn.textContent = "Xem đáp án";
+            els.submitAnswerBtn.classList.remove("hidden");
+          },
+        });
+      } else {
+        els.quizAnswers.innerHTML = `
+          <label for="ansListenExample">Gõ lại câu bạn vừa nghe (chữ Hán)</label>
+          <input type="text" id="ansListenExample" class="text-input" autocomplete="off">`;
+      }
+      speak(word[FIELD.EXAMPLE]);
     }
     els.quizProgressLabel.textContent = `Còn lại: ${quizQueue.length} · Đúng: ${quizCorrectCount}/${quizTotalCount}`;
     const firstInput = els.quizAnswers.querySelector("input");
     if (firstInput) setTimeout(() => firstInput.focus(), 50);
+  }
+
+  // Hiện đáp án đúng + 2 nút tự chấm, dùng cho các câu hỏi bật chế độ viết tay
+  function revealSelfGrade() {
+    const { word, type, checkHandwriteSufficient } = currentQuestion;
+
+    if (checkHandwriteSufficient && !checkHandwriteSufficient()) {
+      showToast("Hãy viết đủ nét hơn trước khi xem đáp án (xem số nét đã đếm dưới bảng vẽ).");
+      return;
+    }
+
+    let answerText = "";
+    let pendingMeaningOk = null;
+
+    if (type === "meaningToWord" || type === "listenWord") {
+      answerText = `${word[FIELD.WORD]} (${word[FIELD.PINYIN]}) — ${word[FIELD.MEANING]}`;
+    } else if (type === "pinyinToBoth") {
+      const valMeaning = $("ansMeaning2") ? $("ansMeaning2").value : "";
+      pendingMeaningOk = meaningMatches(valMeaning, word[FIELD.MEANING]);
+      answerText = `${word[FIELD.WORD]} — ${word[FIELD.MEANING]}` +
+        (pendingMeaningOk ? "" : " (phần nghĩa bạn gõ chưa đúng)");
+    } else if (type === "listenExample") {
+      answerText = `${word[FIELD.EXAMPLE]} (${word[FIELD.EXAMPLE_PINYIN]}) — ${word[FIELD.EXAMPLE_MEANING]}`;
+    }
+
+    currentQuestion.revealed = true;
+    currentQuestion.pendingMeaningOk = pendingMeaningOk;
+    els.selfGradeAnswer.textContent = answerText;
+    fitText(els.selfGradeAnswer, answerText, 32);
+    els.selfGradePanel.classList.remove("hidden");
+    els.submitAnswerBtn.classList.add("hidden");
+  }
+
+  function finalizeSelfGrade(selfOk) {
+    const { word, pendingMeaningOk } = currentQuestion;
+    const overallCorrect = selfOk && (pendingMeaningOk === null || pendingMeaningOk === undefined ? true : pendingMeaningOk);
+    const summary = els.selfGradeAnswer.textContent;
+    els.selfGradePanel.classList.add("hidden");
+    els.submitAnswerBtn.classList.remove("hidden");
+    finalizeAnswer(word, overallCorrect, summary);
+  }
+
+  function handleSubmitClick() {
+    if (!currentQuestion) return;
+    if (currentQuestion.needsSelfGrade && !currentQuestion.revealed) {
+      revealSelfGrade();
+    } else if (!currentQuestion.needsSelfGrade) {
+      submitAnswer();
+    }
   }
 
   async function submitAnswer() {
@@ -396,16 +857,39 @@
       const val = $("ansWord") ? $("ansWord").value : "";
       correct = wordMatches(val, word[FIELD.WORD]);
       correctSummary = `Từ đúng: ${word[FIELD.WORD]} (${word[FIELD.PINYIN]})`;
-    } else {
-      const valWord = $("ansWord2") ? $("ansWord2").value : "";
+    } else if (type === "pinyinToBoth") {
       const valMeaning = $("ansMeaning2") ? $("ansMeaning2").value : "";
-      const wOk = wordMatches(valWord, word[FIELD.WORD]);
       const mOk = meaningMatches(valMeaning, word[FIELD.MEANING]);
+      let wOk;
+      let wordNote = "";
+      if (currentQuestion.hanziAutoMode) {
+        wOk = !!currentQuestion.hanziAllCorrect;
+        wordNote = wOk ? "" : " (bạn chưa viết xong/đúng chữ Hán)";
+      } else {
+        const valWord = $("ansWord2") ? $("ansWord2").value : "";
+        wOk = wordMatches(valWord, word[FIELD.WORD]);
+        wordNote = wOk ? "" : " (bạn gõ sai chữ Hán)";
+      }
       correct = wOk && mOk;
       correctSummary = `Từ đúng: ${word[FIELD.WORD]} — Nghĩa đúng: ${word[FIELD.MEANING]}` +
-        (!wOk ? " (bạn gõ sai chữ Hán)" : "") + (!mOk ? " (bạn gõ sai nghĩa)" : "");
+        wordNote + (!mOk ? " (bạn gõ sai nghĩa)" : "");
+    } else if (type === "listenWord") {
+      const val = $("ansListenWord") ? $("ansListenWord").value : "";
+      correct = wordMatches(val, word[FIELD.WORD]);
+      correctSummary = `Từ đúng: ${word[FIELD.WORD]} (${word[FIELD.PINYIN]}) — ${word[FIELD.MEANING]}`;
+    } else if (type === "listenExample") {
+      const val = $("ansListenExample") ? $("ansListenExample").value : "";
+      correct = wordMatches(val, word[FIELD.EXAMPLE]);
+      correctSummary = `Câu đúng: ${word[FIELD.EXAMPLE]} (${word[FIELD.EXAMPLE_PINYIN]}) — ${word[FIELD.EXAMPLE_MEANING]}`;
     }
 
+    await finalizeAnswer(word, correct, correctSummary);
+  }
+
+  // Phần đuôi dùng chung: cập nhật đếm số, ghi lên Sheet nếu đúng, xếp lại
+  // hàng đợi nếu sai, và hiển thị phản hồi. Dùng cho cả 2 đường: gõ chữ (tự
+  // động chấm) và viết tay (người dùng tự chấm).
+  async function finalizeAnswer(word, correct, correctSummary) {
     quizTotalCount++;
     quizQueue.shift();
 
@@ -488,6 +972,18 @@
   els.flashcard.addEventListener("click", () => {
     els.flashcard.classList.toggle("flipped");
   });
+  els.speakFrontBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (deck.length === 0) return;
+    const c = deck[cardIndex];
+    speak(audioTextForField(c.word, c.front));
+  });
+  els.speakBackBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (deck.length === 0) return;
+    const c = deck[cardIndex];
+    speak(audioTextForField(c.word, c.back));
+  });
   els.prevBtn.addEventListener("click", () => goToCard(cardIndex - 1));
   els.nextBtn.addEventListener("click", () => goToCard(cardIndex + 1));
 
@@ -501,14 +997,22 @@
   });
 
   els.startQuizBtn.addEventListener("click", startQuiz);
-  els.submitAnswerBtn.addEventListener("click", submitAnswer);
+  els.quizSpeakBtn.addEventListener("click", () => {
+    if (!currentQuestion) return;
+    const { word, type } = currentQuestion;
+    if (type === "listenWord") speak(word[FIELD.WORD]);
+    else if (type === "listenExample") speak(word[FIELD.EXAMPLE]);
+  });
+  els.submitAnswerBtn.addEventListener("click", handleSubmitClick);
+  els.selfCorrectBtn.addEventListener("click", () => finalizeSelfGrade(true));
+  els.selfIncorrectBtn.addEventListener("click", () => finalizeSelfGrade(false));
   els.nextQuestionBtn.addEventListener("click", nextQuestion);
   els.quizRestartBtn.addEventListener("click", () => {
     els.quizDone.classList.add("hidden");
     els.quizStart.classList.remove("hidden");
   });
   els.quizAnswers.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); submitAnswer(); }
+    if (e.key === "Enter") { e.preventDefault(); handleSubmitClick(); }
   });
 
   // ================= Init =================
