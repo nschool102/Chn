@@ -2,8 +2,15 @@
   "use strict";
 
   // ================= CONFIG =================
-  const CONFIG_KEY = "hsk-app-api-url";
-  let API_URL = localStorage.getItem(CONFIG_KEY) || "";
+  // Dán URL Apps Script Web App của bạn vào giữa 2 dấu ngoặc kép dưới đây.
+  // Làm 1 lần duy nhất — app sẽ luôn dùng URL này, không cần dán lại kể cả
+  // khi xóa cache trình duyệt hay dùng trên thiết bị khác.
+  const HARDCODED_API_URL = "";
+
+  const CONFIG_KEY = "hsk-app-api-url"; // chỉ dùng dự phòng nếu chưa nhúng URL ở trên
+  const PASSWORD_KEY = "hsk-app-password";
+  let API_URL = HARDCODED_API_URL || localStorage.getItem(CONFIG_KEY) || "";
+  let APP_PASSWORD = localStorage.getItem(PASSWORD_KEY) || "";
 
   const FIELD = {
     LEVEL: "LEVEL",
@@ -57,11 +64,15 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     setupModal: $("setupModal"), apiUrlInput: $("apiUrlInput"),
+    passwordInput: $("passwordInput"), setupTitle: $("setupTitle"), setupDesc: $("setupDesc"),
     saveApiUrlBtn: $("saveApiUrlBtn"), setupError: $("setupError"),
     app: $("app"), dataStatus: $("dataStatus"),
     refreshBtn: $("refreshBtn"), settingsBtn: $("settingsBtn"),
     levelFilter: $("levelFilter"), topicFilter: $("topicFilter"),
-    pinyinToggle: $("pinyinToggle"), handwriteToggle: $("handwriteToggle"), tabs: $("tabs"),
+    pinyinToggle: $("pinyinToggle"), handwriteToggle: $("handwriteToggle"),
+    handwriteToggleWrap: $("handwriteToggleWrap"),
+    hintOutlineToggle: $("hintOutlineToggle"), hintOutlineWrap: $("hintOutlineWrap"),
+    tabs: $("tabs"),
     viewCard: $("view-card"), viewQuiz: $("view-quiz"),
     shuffleBtn: $("shuffleBtn"), cardProgressLabel: $("cardProgressLabel"),
     flashcard: $("flashcard"), frontTag: $("frontTag"), frontText: $("frontText"),
@@ -129,9 +140,21 @@
 
   // ================= Handwriting pad (vẽ chữ Hán bằng bút/ngón tay) =================
   const HANDWRITE_KEY = "hsk-app-handwrite";
+  const HINT_OUTLINE_KEY = "hsk-app-hint-outline";
   els.handwriteToggle.checked = localStorage.getItem(HANDWRITE_KEY) === "1";
+  els.hintOutlineToggle.checked = localStorage.getItem(HINT_OUTLINE_KEY) === "1";
+
+  function syncHintOutlineVisibility() {
+    els.hintOutlineWrap.classList.toggle("hidden", !els.handwriteToggle.checked);
+  }
+  syncHintOutlineVisibility();
+
   els.handwriteToggle.addEventListener("change", () => {
     localStorage.setItem(HANDWRITE_KEY, els.handwriteToggle.checked ? "1" : "0");
+    syncHintOutlineVisibility();
+  });
+  els.hintOutlineToggle.addEventListener("change", () => {
+    localStorage.setItem(HINT_OUTLINE_KEY, els.hintOutlineToggle.checked ? "1" : "0");
   });
 
   function charCountFor(text) {
@@ -147,7 +170,7 @@
       </div>`;
   }
 
-  function drawGuide(ctx, w, h, charCount) {
+  function drawGuide(ctx, w, h, charCount, hintChars) {
     ctx.clearRect(0, 0, w, h);
     ctx.save();
     ctx.strokeStyle = "rgba(178,52,52,0.32)";
@@ -162,11 +185,29 @@
         ctx.lineTo(boxW * i, h);
         ctx.stroke();
       }
+      if (hintChars && hintChars.length) {
+        ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(43,38,34,0.22)";
+        ctx.font = `${Math.floor(Math.min(boxW, h) * 0.62)}px "Noto Serif SC", serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        hintChars.forEach((ch, i) => {
+          ctx.fillText(ch, boxW * i + boxW / 2, h / 2);
+        });
+      }
     } else {
       ctx.beginPath();
       ctx.moveTo(0, h * 0.72);
       ctx.lineTo(w, h * 0.72);
       ctx.stroke();
+      if (hintChars && hintChars.length) {
+        ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(43,38,34,0.22)";
+        ctx.font = `${Math.floor(h * 0.5)}px "Noto Serif SC", serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText(hintChars.join(""), 8, h * 0.62);
+      }
     }
     ctx.restore();
   }
@@ -174,8 +215,10 @@
   // Gắn Pointer Events (chuột/ngón tay/Apple Pencil đều dùng chung API này) lên canvas.
   // Đồng thời đếm số nét (mỗi lần nhấc bút = 1 nét) và tổng độ dài mực đã vẽ,
   // dùng làm ngưỡng chặn kiểu "vẽ nguệch ngoạc rồi bấm đúng".
-  function initHandwriteCanvas(canvasEl, charCount, onChange) {
+  function initHandwriteCanvas(canvasEl, targetText, onChange, showHint) {
     const dpr = window.devicePixelRatio || 1;
+    const charCount = charCountFor(targetText);
+    const hintChars = showHint ? charsOf(targetText) : null;
     let ctx;
     function resize() {
       const cssW = canvasEl.clientWidth || 300;
@@ -184,7 +227,7 @@
       canvasEl.height = Math.max(1, Math.round(cssH * dpr));
       ctx = canvasEl.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawGuide(ctx, cssW, cssH, charCount);
+      drawGuide(ctx, cssW, cssH, charCount, hintChars);
       ctx.lineWidth = 5;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -257,11 +300,13 @@
 
   // Chèn bảng vẽ vào 1 container, tự dò kích thước sau khi đã nằm trong DOM.
   // Trả về hàm kiểm tra "đã viết đủ chưa" để dùng khi bấm Xem đáp án.
-  function mountHandwritePad(container, canvasId, charCount) {
+  function mountHandwritePad(container, canvasId, targetText) {
     const canvasEl = container.querySelector("#" + canvasId);
     const counterEl = container.querySelector("#" + canvasId + "-counter");
     if (!canvasEl) return () => true;
+    const charCount = charCountFor(targetText);
     const threshold = handwriteThreshold(charCount);
+    const showHint = els.hintOutlineToggle.checked;
 
     function updateCounter(strokes) {
       if (!counterEl) return;
@@ -271,7 +316,7 @@
     }
 
     requestAnimationFrame(() => {
-      initHandwriteCanvas(canvasEl, charCount, (strokes) => updateCounter(strokes));
+      initHandwriteCanvas(canvasEl, targetText, (strokes) => updateCounter(strokes), showHint);
     });
     const clearBtn = container.querySelector('[data-clear-for="' + canvasId + '"]');
     if (clearBtn) clearBtn.addEventListener("click", () => canvasEl._clearHandwrite && canvasEl._clearHandwrite());
@@ -328,7 +373,7 @@
           width: target.clientWidth || 84,
           height: target.clientHeight || 84,
           padding: 6,
-          showOutline: true,
+          showOutline: els.hintOutlineToggle.checked,
           strokeColor: "#2B2622",
           outlineColor: "#E4DCC8",
           highlightColor: "#B23434",
@@ -394,14 +439,14 @@
         onSkip: cbs.onSkip,
         onLoadError: () => {
           container.innerHTML = handwritePadHtml("hwCanvas");
-          const isSufficient = mountHandwritePad(container, "hwCanvas", charCountFor(targetText));
+          const isSufficient = mountHandwritePad(container, "hwCanvas", targetText);
           cbs.onFallbackCanvas(isSufficient);
           showToast("Không tải được dữ liệu nét chữ cho ký tự này, chuyển sang bảng vẽ tự chấm.");
         },
       });
     } else {
       container.innerHTML = handwritePadHtml("hwCanvas");
-      const isSufficient = mountHandwritePad(container, "hwCanvas", charCountFor(targetText));
+      const isSufficient = mountHandwritePad(container, "hwCanvas", targetText);
       cbs.onFallbackCanvas(isSufficient);
     }
   }
@@ -418,10 +463,14 @@
     const res = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(Object.assign({ password: APP_PASSWORD || "" }, payload)),
     });
     const json = await res.json();
-    if (!json.ok) throw new Error(json.error || "Lỗi cập nhật");
+    if (!json.ok) {
+      const err = new Error(json.error || "Lỗi cập nhật");
+      err.authError = !!json.authError;
+      throw err;
+    }
     return json;
   }
 
@@ -902,7 +951,13 @@
         const res = await apiPost({ action: "incrementMastery", row: word._row });
         word[FIELD.MASTERY] = res.newValue;
       } catch (err) {
-        showToast("Không đồng bộ được lên Sheet: " + err.message);
+        if (err.authError) {
+          showToast(APP_PASSWORD
+            ? "Sai mật khẩu — điểm chỉ tính tạm trên máy, chưa ghi lên Sheet."
+            : "Chưa nhập mật khẩu — điểm chỉ tính tạm trên máy, chưa ghi lên Sheet.");
+        } else {
+          showToast("Không đồng bộ được lên Sheet: " + err.message);
+        }
       }
     } else {
       quizQueue.push(word); // hỏi lại sau trong cùng phiên
@@ -917,16 +972,20 @@
 
   // ================= Events =================
   els.saveApiUrlBtn.addEventListener("click", async () => {
-    const url = els.apiUrlInput.value.trim();
-    if (!url.startsWith("https://script.google.com/")) {
-      els.setupError.textContent = "URL không hợp lệ. Phải bắt đầu bằng https://script.google.com/";
-      return;
+    if (!els.apiUrlInput.classList.contains("hidden")) {
+      const url = els.apiUrlInput.value.trim();
+      if (!url.startsWith("https://script.google.com/")) {
+        els.setupError.textContent = "URL không hợp lệ. Phải bắt đầu bằng https://script.google.com/";
+        return;
+      }
+      API_URL = url;
     }
+    APP_PASSWORD = els.passwordInput.value;
     els.setupError.textContent = "Đang kết nối…";
-    API_URL = url;
     const ok = await loadData(false);
     if (ok) {
-      localStorage.setItem(CONFIG_KEY, API_URL);
+      if (!HARDCODED_API_URL) localStorage.setItem(CONFIG_KEY, API_URL);
+      localStorage.setItem(PASSWORD_KEY, APP_PASSWORD);
       els.setupModal.classList.add("hidden");
       els.app.classList.remove("hidden");
     } else {
@@ -935,7 +994,13 @@
   });
 
   els.settingsBtn.addEventListener("click", () => {
+    els.apiUrlInput.classList.toggle("hidden", !!HARDCODED_API_URL);
     els.apiUrlInput.value = API_URL;
+    els.passwordInput.value = APP_PASSWORD;
+    els.setupTitle.textContent = "Cài đặt kết nối";
+    els.setupDesc.textContent = HARDCODED_API_URL
+      ? "Mật khẩu (nếu có) chỉ dùng để ghi điểm kiểm tra lên Sheet. Không nhập vẫn làm bài và tính điểm bình thường, chỉ là không đồng bộ lên Sheet."
+      : "Dán URL Apps Script Web App bạn đã deploy từ Sheet \"HSK\" vào đây. Xem hướng dẫn trong file backend-apps-script.gs.txt đi kèm. Mật khẩu chỉ dùng để ghi điểm lên Sheet, không bắt buộc.";
     els.setupError.textContent = "";
     els.setupModal.classList.remove("hidden");
   });
@@ -1020,8 +1085,9 @@
     if (API_URL) {
       els.setupModal.classList.add("hidden");
       els.app.classList.remove("hidden");
-      await loadData(false);
+      await loadData(false); // nếu sai/thiếu mật khẩu, loadData tự mở lại modal
     } else {
+      els.apiUrlInput.classList.remove("hidden");
       els.setupModal.classList.remove("hidden");
       els.app.classList.add("hidden");
     }

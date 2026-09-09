@@ -9,21 +9,47 @@
  *    - Description: tùy ý, vd "HSK PWA API"
  *    - Execute as: Me (tài khoản của bạn)
  *    - Who has access: Anyone (bắt buộc chọn "Anyone" để app gọi được,
- *      vì đây chỉ dùng cho việc học cá nhân nên không lo lộ dữ liệu nhạy cảm)
+ *      vì có lớp mật khẩu ở dưới bảo vệ rồi nên vẫn an toàn)
  * 6. Bấm Deploy > Authorize access > chọn tài khoản Google > Advanced >
  *    "Go to ... (unsafe)" > Allow (vì đây là script tự viết, Google sẽ cảnh báo mặc định)
  * 7. Copy URL dạng: https://script.google.com/macros/s/XXXXXXXX/exec
- * 8. Dán URL đó vào PWA ở màn hình cài đặt lúc mở app lần đầu
+ * 8. Dán URL đó vào app.js (biến API_URL) — chỉ cần làm 1 lần, không cần lặp lại
+ *    kể cả khi xóa cache trình duyệt.
+ * 9. (Tùy chọn nhưng khuyến khích) Tạo thêm 1 sheet tên đúng là "CONFIG" trong
+ *    cùng file Google Sheet này, gõ 1 mật khẩu bất kỳ vào ô A1. Mật khẩu này
+ *    CHỈ áp dụng cho việc GHI điểm (cột OK) — ai cũng đọc/làm bài được bình
+ *    thường không cần mật khẩu, nhưng nếu gõ sai hoặc không nhập mật khẩu,
+ *    kết quả kiểm tra vẫn tính điểm bình thường trên máy, chỉ là KHÔNG được
+ *    ghi lên Sheet. Để trống ô A1 (hoặc không tạo sheet CONFIG) = ai cũng
+ *    ghi được, không cần mật khẩu.
  *
  * Lưu ý: Nếu sau này bạn sửa lại code này, phải bấm Deploy > Manage deployments
  * > sửa deployment cũ > New version, thì URL mới áp dụng thay đổi (URL giữ nguyên).
+ * Đổi mật khẩu bất cứ lúc nào chỉ cần sửa ô CONFIG!A1, không cần deploy lại.
  */
 
 var SPREADSHEET_ID = '183NqZLUSQvN81Vuni4sBLKy1f7g4VVFSWYToYuH5rhc';
 var SHEET_NAME = 'HSK';
+var CONFIG_SHEET_NAME = 'CONFIG'; // ô A1 của sheet này = mật khẩu dùng chung
 // Chấp nhận cả tên cột tiếng Anh lẫn tiếng Việt cũ - phòng khi đổi tên cột sau này
 var MASTERY_COL_ALIASES = ['OK', 'THUỘC RỒI'];
 var MASTERY_MAX = 5;
+
+// Đọc mật khẩu từ sheet CONFIG!A1. Nếu chưa tạo sheet CONFIG, hoặc ô A1 để
+// trống, coi như chưa bật bảo vệ -> không chặn ai (để không tự khóa mình
+// khi chưa kịp thiết lập).
+function _checkPassword(pw) {
+  try {
+    var cfg = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(CONFIG_SHEET_NAME);
+    if (!cfg) return true;
+    var expected = cfg.getRange('A1').getValue();
+    expected = (expected === null || expected === undefined) ? '' : String(expected).trim();
+    if (!expected) return true;
+    return String(pw || '').trim() === expected;
+  } catch (err) {
+    return true;
+  }
+}
 
 function _stripDiacritics(s) {
   return (s || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd');
@@ -50,7 +76,8 @@ function _json(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// Lấy toàn bộ dữ liệu sheet dạng JSON
+// Lấy toàn bộ dữ liệu sheet dạng JSON — KHÔNG cần mật khẩu, để ai cũng làm
+// bài được (chỉ phần GHI điểm ở doPost mới cần đúng mật khẩu).
 function doGet(e) {
   try {
     var sheet = _getSheet();
@@ -75,6 +102,9 @@ function doGet(e) {
 function doPost(e) {
   try {
     var body = JSON.parse(e.postData.contents);
+    if (!_checkPassword(body.password)) {
+      return _json({ ok: false, authError: true, error: 'Sai mật khẩu' });
+    }
     var action = body.action;
     var sheet = _getSheet();
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];

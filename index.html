@@ -23,9 +23,10 @@
 <div class="modal-overlay" id="setupModal">
   <div class="modal">
     <div class="brand-seal lg">习</div>
-    <h2>Kết nối tới Google Sheet</h2>
-    <p class="modal-desc">Dán URL Apps Script Web App bạn đã deploy từ Sheet "HSK" vào đây. Xem hướng dẫn trong file <b>backend-apps-script.gs.txt</b> đi kèm.</p>
-    <input type="text" id="apiUrlInput" class="text-input" placeholder="https://script.google.com/macros/s/…/exec">
+    <h2 id="setupTitle">Kết nối tới Google Sheet</h2>
+    <p class="modal-desc" id="setupDesc">Dán URL Apps Script Web App bạn đã deploy từ Sheet "HSK" vào đây. Xem hướng dẫn trong file <b>backend-apps-script.gs.txt</b> đi kèm. Mật khẩu chỉ dùng để ghi điểm kiểm tra lên Sheet, không bắt buộc để đọc/làm bài.</p>
+    <input type="text" id="apiUrlInput" class="text-input hidden" placeholder="https://script.google.com/macros/s/…/exec">
+    <input type="password" id="passwordInput" class="text-input" placeholder="Mật khẩu ghi điểm (tùy chọn, để trống nếu không cần đồng bộ Sheet)" autocomplete="off">
     <button class="primary-btn" id="saveApiUrlBtn">Lưu &amp; Kết nối</button>
     <p class="modal-error" id="setupError"></p>
   </div>
@@ -62,10 +63,16 @@
     <span class="toggle-label">Bao gồm Pinyin trong flashcard</span>
   </label>
 
-  <label class="pinyin-toggle">
+  <label class="pinyin-toggle" id="handwriteToggleWrap">
     <input type="checkbox" id="handwriteToggle">
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
     <span class="toggle-label">Viết tay bằng nét vẽ khi cần gõ chữ Hán (hợp iPad/Apple Pencil)</span>
+  </label>
+
+  <label class="pinyin-toggle hidden" id="hintOutlineWrap">
+    <input type="checkbox" id="hintOutlineToggle">
+    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    <span class="toggle-label">Hiện nét mờ gợi ý khi viết (tắt = khung trống, luyện trí nhớ)</span>
   </label>
 
   <nav class="tabs" id="tabs">
