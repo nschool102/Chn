@@ -17,7 +17,9 @@
     STT: "No.",
     WORD: "VOCAB",
     PINYIN: "PINYIN",
+    POS: "PART-OF-SPEECH",
     MEANING: "MEANING",
+    HAN_VIET: "HAN-VIET",
     TOPIC: "TOPIC",
     EXAMPLE: "EXAMPLE",
     EXAMPLE_PINYIN: "EXAMPLE PINYIN",
@@ -25,18 +27,32 @@
     MASTERY: "OK",
   };
 
-  const FORMATS_WITH_PINYIN = [
-    [FIELD.PINYIN, FIELD.MEANING], [FIELD.MEANING, FIELD.PINYIN],
-    [FIELD.WORD, FIELD.MEANING], [FIELD.MEANING, FIELD.WORD],
-    [FIELD.WORD, FIELD.PINYIN], [FIELD.PINYIN, FIELD.WORD],
-    [FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE_MEANING], [FIELD.EXAMPLE_MEANING, FIELD.EXAMPLE_PINYIN],
-    [FIELD.EXAMPLE, FIELD.EXAMPLE_PINYIN], [FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE],
-    [FIELD.EXAMPLE, FIELD.MEANING], [FIELD.MEANING, FIELD.EXAMPLE],
-  ];
-  const FORMATS_NO_PINYIN = [
-    [FIELD.WORD, FIELD.MEANING], [FIELD.MEANING, FIELD.WORD],
-    [FIELD.EXAMPLE, FIELD.MEANING], [FIELD.MEANING, FIELD.EXAMPLE],
-  ];
+  // Xây danh sách các kiểu thẻ mặt-trước/mặt-sau tùy theo các toggle đang bật.
+  function buildFormatPool(opts) {
+    const pool = [
+      [FIELD.WORD, FIELD.MEANING], [FIELD.MEANING, FIELD.WORD],
+      [FIELD.EXAMPLE, FIELD.MEANING], [FIELD.MEANING, FIELD.EXAMPLE],
+    ];
+    if (opts.pinyin) {
+      pool.push(
+        [FIELD.PINYIN, FIELD.MEANING], [FIELD.MEANING, FIELD.PINYIN],
+        [FIELD.WORD, FIELD.PINYIN], [FIELD.PINYIN, FIELD.WORD],
+        [FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE_MEANING], [FIELD.EXAMPLE_MEANING, FIELD.EXAMPLE_PINYIN],
+        [FIELD.EXAMPLE, FIELD.EXAMPLE_PINYIN], [FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE]
+      );
+    }
+    if (opts.hanViet) {
+      pool.push(
+        [FIELD.WORD, FIELD.HAN_VIET], [FIELD.HAN_VIET, FIELD.WORD],
+        [FIELD.HAN_VIET, FIELD.MEANING], [FIELD.MEANING, FIELD.HAN_VIET]
+      );
+      if (opts.pinyin) pool.push([FIELD.PINYIN, FIELD.HAN_VIET], [FIELD.HAN_VIET, FIELD.PINYIN]);
+    }
+    if (opts.pos) {
+      pool.push([FIELD.WORD, FIELD.POS], [FIELD.MEANING, FIELD.POS]);
+    }
+    return pool;
+  }
 
   let ALL_WORDS = [];
   let MASTERY_MAX = 5;
@@ -69,7 +85,8 @@
     app: $("app"), dataStatus: $("dataStatus"),
     refreshBtn: $("refreshBtn"), settingsBtn: $("settingsBtn"),
     levelFilter: $("levelFilter"), topicFilter: $("topicFilter"),
-    pinyinToggle: $("pinyinToggle"), handwriteToggle: $("handwriteToggle"),
+    pinyinToggle: $("pinyinToggle"), hanVietToggle: $("hanVietToggle"), posToggle: $("posToggle"),
+    handwriteToggle: $("handwriteToggle"),
     handwriteToggleWrap: $("handwriteToggleWrap"),
     hintOutlineToggle: $("hintOutlineToggle"), hintOutlineWrap: $("hintOutlineWrap"),
     tabs: $("tabs"),
@@ -595,7 +612,11 @@
 
   function buildFlashcardDeck() {
     const words = filteredWords();
-    const formats = els.pinyinToggle.checked ? FORMATS_WITH_PINYIN : FORMATS_NO_PINYIN;
+    const formats = buildFormatPool({
+      pinyin: els.pinyinToggle.checked,
+      hanViet: els.hanVietToggle.checked,
+      pos: els.posToggle.checked,
+    });
     deck = words.map((w) => {
       const [f, b] = pickFormat(w, formats);
       return { word: w, front: f, back: b };
@@ -712,9 +733,43 @@
     const word = quizQueue[0];
     const types = QUIZ_TYPES_BASE.slice();
     if ((word[FIELD.EXAMPLE] || "").toString().trim()) types.push("listenExample");
+    if (els.hanVietToggle.checked && (word[FIELD.HAN_VIET] || "").toString().trim()) types.push("hanVietToBoth");
+    if (els.posToggle.checked && (word[FIELD.POS] || "").toString().trim()) types.push("wordToPOS");
     const type = types[Math.floor(Math.random() * types.length)];
     currentQuestion = { word, type };
     renderQuestion();
+  }
+
+  // Dùng chung cho các câu hỏi "đưa 1 cách đọc (pinyin/Hán Việt) -> gõ lại
+  // TỪ VỰNG + NGHĨA". Chỉ khác nhau ở giá trị hiển thị trên prompt.
+  function renderRecallBothQuestion(word, handwrite, promptValue) {
+    els.quizPromptText.textContent = promptValue;
+    fitText(els.quizPromptText, promptValue, 40);
+    const meaningInputHtml = `
+      <label for="ansMeaning2">Gõ lại NGHĨA</label>
+      <input type="text" id="ansMeaning2" class="text-input" autocomplete="off">`;
+    if (handwrite && HANZI_WRITER_READY) {
+      currentQuestion.hanziAutoMode = true;
+      const chars = charsOf(word[FIELD.WORD]);
+      els.quizAnswers.innerHTML = renderHanziQuizHtml(chars) + meaningInputHtml;
+      mountHanziQuiz(els.quizAnswers, chars, {
+        onComplete: () => {
+          currentQuestion.hanziAllCorrect = true;
+          showToast("Đã viết đúng chữ Hán — giờ gõ nghĩa rồi bấm Kiểm tra.");
+        },
+        onSkip: () => finalizeAnswer(word, false, `Từ đúng: ${word[FIELD.WORD]} — Nghĩa đúng: ${word[FIELD.MEANING]}`),
+        onLoadError: () => {
+          currentQuestion.hanziAutoMode = false;
+          els.quizAnswers.innerHTML = `
+            <label for="ansWord2">Gõ lại TỪ VỰNG (chữ Hán)</label>
+            <input type="text" id="ansWord2" class="text-input" autocomplete="off">` + meaningInputHtml;
+        },
+      });
+    } else {
+      els.quizAnswers.innerHTML = `
+        <label for="ansWord2">Gõ lại TỪ VỰNG (chữ Hán)</label>
+        <input type="text" id="ansWord2" class="text-input" autocomplete="off">` + meaningInputHtml;
+    }
   }
 
   function renderQuestion() {
@@ -764,33 +819,17 @@
       }
     } else if (type === "pinyinToBoth") {
       els.quizPromptTag.textContent = FIELD.PINYIN;
-      els.quizPromptText.textContent = word[FIELD.PINYIN];
-      fitText(els.quizPromptText, word[FIELD.PINYIN], 40);
-      const meaningInputHtml = `
-        <label for="ansMeaning2">Gõ lại NGHĨA</label>
-        <input type="text" id="ansMeaning2" class="text-input" autocomplete="off">`;
-      if (handwrite && HANZI_WRITER_READY) {
-        currentQuestion.hanziAutoMode = true;
-        const chars = charsOf(word[FIELD.WORD]);
-        els.quizAnswers.innerHTML = renderHanziQuizHtml(chars) + meaningInputHtml;
-        mountHanziQuiz(els.quizAnswers, chars, {
-          onComplete: () => {
-            currentQuestion.hanziAllCorrect = true;
-            showToast("Đã viết đúng chữ Hán — giờ gõ nghĩa rồi bấm Kiểm tra.");
-          },
-          onSkip: () => finalizeAnswer(word, false, `Từ đúng: ${word[FIELD.WORD]} — Nghĩa đúng: ${word[FIELD.MEANING]}`),
-          onLoadError: () => {
-            currentQuestion.hanziAutoMode = false;
-            els.quizAnswers.innerHTML = `
-              <label for="ansWord2">Gõ lại TỪ VỰNG (chữ Hán)</label>
-              <input type="text" id="ansWord2" class="text-input" autocomplete="off">` + meaningInputHtml;
-          },
-        });
-      } else {
-        els.quizAnswers.innerHTML = `
-          <label for="ansWord2">Gõ lại TỪ VỰNG (chữ Hán)</label>
-          <input type="text" id="ansWord2" class="text-input" autocomplete="off">` + meaningInputHtml;
-      }
+      renderRecallBothQuestion(word, handwrite, word[FIELD.PINYIN]);
+    } else if (type === "hanVietToBoth") {
+      els.quizPromptTag.textContent = FIELD.HAN_VIET;
+      renderRecallBothQuestion(word, handwrite, word[FIELD.HAN_VIET]);
+    } else if (type === "wordToPOS") {
+      els.quizPromptTag.textContent = FIELD.WORD;
+      els.quizPromptText.textContent = word[FIELD.WORD];
+      fitText(els.quizPromptText, word[FIELD.WORD], 56);
+      els.quizAnswers.innerHTML = `
+        <label for="ansPOS">Gõ lại LOẠI TỪ</label>
+        <input type="text" id="ansPOS" class="text-input" autocomplete="off">`;
     } else if (type === "listenWord") {
       els.quizPromptTag.textContent = "NGHE TỪ";
       els.quizPromptText.textContent = "🔊";
@@ -857,7 +896,7 @@
 
     if (type === "meaningToWord" || type === "listenWord") {
       answerText = `${word[FIELD.WORD]} (${word[FIELD.PINYIN]}) — ${word[FIELD.MEANING]}`;
-    } else if (type === "pinyinToBoth") {
+    } else if (type === "pinyinToBoth" || type === "hanVietToBoth") {
       const valMeaning = $("ansMeaning2") ? $("ansMeaning2").value : "";
       pendingMeaningOk = meaningMatches(valMeaning, word[FIELD.MEANING]);
       answerText = `${word[FIELD.WORD]} — ${word[FIELD.MEANING]}` +
@@ -906,7 +945,7 @@
       const val = $("ansWord") ? $("ansWord").value : "";
       correct = wordMatches(val, word[FIELD.WORD]);
       correctSummary = `Từ đúng: ${word[FIELD.WORD]} (${word[FIELD.PINYIN]})`;
-    } else if (type === "pinyinToBoth") {
+    } else if (type === "pinyinToBoth" || type === "hanVietToBoth") {
       const valMeaning = $("ansMeaning2") ? $("ansMeaning2").value : "";
       const mOk = meaningMatches(valMeaning, word[FIELD.MEANING]);
       let wOk;
@@ -922,6 +961,10 @@
       correct = wOk && mOk;
       correctSummary = `Từ đúng: ${word[FIELD.WORD]} — Nghĩa đúng: ${word[FIELD.MEANING]}` +
         wordNote + (!mOk ? " (bạn gõ sai nghĩa)" : "");
+    } else if (type === "wordToPOS") {
+      const val = $("ansPOS") ? $("ansPOS").value : "";
+      correct = meaningMatches(val, word[FIELD.POS]);
+      correctSummary = `Loại từ đúng: ${word[FIELD.POS]}`;
     } else if (type === "listenWord") {
       const val = $("ansListenWord") ? $("ansListenWord").value : "";
       correct = wordMatches(val, word[FIELD.WORD]);
@@ -1013,6 +1056,18 @@
   });
   els.topicFilter.addEventListener("change", buildFlashcardDeck);
   els.pinyinToggle.addEventListener("change", buildFlashcardDeck);
+  const HAN_VIET_TOGGLE_KEY = "hsk-app-hanviet-toggle";
+  const POS_TOGGLE_KEY = "hsk-app-pos-toggle";
+  els.hanVietToggle.checked = localStorage.getItem(HAN_VIET_TOGGLE_KEY) === "1";
+  els.posToggle.checked = localStorage.getItem(POS_TOGGLE_KEY) === "1";
+  els.hanVietToggle.addEventListener("change", () => {
+    localStorage.setItem(HAN_VIET_TOGGLE_KEY, els.hanVietToggle.checked ? "1" : "0");
+    buildFlashcardDeck();
+  });
+  els.posToggle.addEventListener("change", () => {
+    localStorage.setItem(POS_TOGGLE_KEY, els.posToggle.checked ? "1" : "0");
+    buildFlashcardDeck();
+  });
 
   els.tabs.addEventListener("click", (e) => {
     const btn = e.target.closest(".tab");
