@@ -27,32 +27,20 @@
     MASTERY: "OK",
   };
 
-  // Xây danh sách các kiểu thẻ mặt-trước/mặt-sau tùy theo các toggle đang bật.
-  function buildFormatPool(opts) {
-    const pool = [
-      [FIELD.WORD, FIELD.MEANING], [FIELD.MEANING, FIELD.WORD],
-      [FIELD.EXAMPLE, FIELD.MEANING], [FIELD.MEANING, FIELD.EXAMPLE],
-    ];
-    if (opts.pinyin) {
-      pool.push(
-        [FIELD.PINYIN, FIELD.MEANING], [FIELD.MEANING, FIELD.PINYIN],
-        [FIELD.WORD, FIELD.PINYIN], [FIELD.PINYIN, FIELD.WORD],
-        [FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE_MEANING], [FIELD.EXAMPLE_MEANING, FIELD.EXAMPLE_PINYIN],
-        [FIELD.EXAMPLE, FIELD.EXAMPLE_PINYIN], [FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE]
-      );
-    }
-    if (opts.hanViet) {
-      pool.push(
-        [FIELD.WORD, FIELD.HAN_VIET], [FIELD.HAN_VIET, FIELD.WORD],
-        [FIELD.HAN_VIET, FIELD.MEANING], [FIELD.MEANING, FIELD.HAN_VIET]
-      );
-      if (opts.pinyin) pool.push([FIELD.PINYIN, FIELD.HAN_VIET], [FIELD.HAN_VIET, FIELD.PINYIN]);
-    }
-    if (opts.pos) {
-      pool.push([FIELD.WORD, FIELD.POS], [FIELD.MEANING, FIELD.POS]);
-    }
-    return pool;
-  }
+  // Flashcard chỉ dùng đúng 8 kiểu mặt trước/sau này (cố định, không phụ
+  // thuộc toggle Hán Việt/Loại từ nữa). Toggle Pinyin quyết định có thêm
+  // 4 kiểu liên quan tới pinyin hay chỉ dùng 4 kiểu nghĩa/ví dụ cơ bản.
+  const FLASHCARD_FORMATS_BASE = [
+    [FIELD.MEANING, FIELD.WORD], [FIELD.WORD, FIELD.MEANING],
+    [FIELD.EXAMPLE, FIELD.EXAMPLE_MEANING], [FIELD.EXAMPLE_MEANING, FIELD.EXAMPLE],
+  ];
+  const FLASHCARD_FORMATS_PINYIN_EXTRA = [
+    [FIELD.WORD, FIELD.PINYIN], [FIELD.PINYIN, FIELD.WORD],
+    [FIELD.EXAMPLE, FIELD.EXAMPLE_PINYIN], [FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE],
+  ];
+  // Các field thuộc "câu ví dụ" — thẻ có mặt nào rơi vào nhóm này thì không
+  // hiện nhãn Loại từ (Part-of-speech vốn chỉ áp dụng cho từ vựng đơn lẻ).
+  const EXAMPLE_FIELDS = [FIELD.EXAMPLE, FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE_MEANING];
 
   let ALL_WORDS = [];
   let MASTERY_MAX = 5;
@@ -80,12 +68,12 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     setupModal: $("setupModal"), apiUrlInput: $("apiUrlInput"),
-    passwordInput: $("passwordInput"), setupTitle: $("setupTitle"), setupDesc: $("setupDesc"),
+    setupTitle: $("setupTitle"), setupDesc: $("setupDesc"),
     saveApiUrlBtn: $("saveApiUrlBtn"), setupError: $("setupError"),
     app: $("app"), dataStatus: $("dataStatus"),
     refreshBtn: $("refreshBtn"), settingsBtn: $("settingsBtn"),
     levelFilter: $("levelFilter"), topicFilter: $("topicFilter"),
-    pinyinToggle: $("pinyinToggle"), hanVietToggle: $("hanVietToggle"), posToggle: $("posToggle"),
+    pinyinToggle: $("pinyinToggle"), hanVietToggle: $("hanVietToggle"),
     handwriteToggle: $("handwriteToggle"),
     handwriteToggleWrap: $("handwriteToggleWrap"),
     hintOutlineToggle: $("hintOutlineToggle"), hintOutlineWrap: $("hintOutlineWrap"),
@@ -94,6 +82,8 @@
     shuffleBtn: $("shuffleBtn"), cardProgressLabel: $("cardProgressLabel"),
     flashcard: $("flashcard"), frontTag: $("frontTag"), frontText: $("frontText"),
     backTag: $("backTag"), backText: $("backText"),
+    frontNoTag: $("frontNoTag"), backNoTag: $("backNoTag"),
+    frontPosTag: $("frontPosTag"), backPosTag: $("backPosTag"),
     speakFrontBtn: $("speakFrontBtn"), speakBackBtn: $("speakBackBtn"),
     prevBtn: $("prevBtn"), nextBtn: $("nextBtn"),
     quizStart: $("quizStart"), quizStartError: $("quizStartError"), startQuizBtn: $("startQuizBtn"),
@@ -106,7 +96,10 @@
     quizFeedback: $("quizFeedback"), feedbackVerdict: $("feedbackVerdict"),
     feedbackCorrect: $("feedbackCorrect"), nextQuestionBtn: $("nextQuestionBtn"),
     quizDone: $("quizDone"), quizDoneTitle: $("quizDoneTitle"), quizDoneDesc: $("quizDoneDesc"),
+    quizDoneMissed: $("quizDoneMissed"),
     quizRestartBtn: $("quizRestartBtn"),
+    quizPasswordModal: $("quizPasswordModal"), quizPasswordInput: $("quizPasswordInput"),
+    quizPasswordConfirmBtn: $("quizPasswordConfirmBtn"), quizPasswordSkipBtn: $("quizPasswordSkipBtn"),
     toast: $("toast"),
   };
 
@@ -612,11 +605,9 @@
 
   function buildFlashcardDeck() {
     const words = filteredWords();
-    const formats = buildFormatPool({
-      pinyin: els.pinyinToggle.checked,
-      hanViet: els.hanVietToggle.checked,
-      pos: els.posToggle.checked,
-    });
+    const formats = els.pinyinToggle.checked
+      ? FLASHCARD_FORMATS_BASE.concat(FLASHCARD_FORMATS_PINYIN_EXTRA)
+      : FLASHCARD_FORMATS_BASE;
     deck = words.map((w) => {
       const [f, b] = pickFormat(w, formats);
       return { word: w, front: f, back: b };
@@ -658,6 +649,19 @@
     els.backText.textContent = backVal;
     fitText(els.frontText, frontVal, 56);
     fitText(els.backText, backVal, 24);
+
+    const recordNo = c.word[FIELD.STT];
+    els.frontNoTag.textContent = recordNo ? "No. " + recordNo : "";
+    els.backNoTag.textContent = recordNo ? "No. " + recordNo : "";
+
+    const isExampleCard = EXAMPLE_FIELDS.includes(c.front) || EXAMPLE_FIELDS.includes(c.back);
+    const pos = (c.word[FIELD.POS] || "").toString().trim();
+    const showPos = !isExampleCard && !!pos;
+    els.frontPosTag.textContent = pos;
+    els.backPosTag.textContent = pos;
+    els.frontPosTag.classList.toggle("hidden", !showPos);
+    els.backPosTag.classList.toggle("hidden", !showPos);
+
     els.cardProgressLabel.textContent = `Thẻ ${cardIndex + 1} / ${deck.length}`;
   }
 
@@ -672,17 +676,24 @@
   let quizQueue = [];
   let quizCorrectCount = 0;
   let quizTotalCount = 0;
+  let missedWords = []; // các từ đã trả lời sai ít nhất 1 lần trong phiên này
+  let syncEnabled = false; // có mật khẩu -> thử ghi điểm lên Sheet
   let currentQuestion = null; // { word, type }
 
   function normalizeLoose(str) {
-    return stripDiacritics((str || "").toLowerCase().trim().replace(/\s+/g, " "));
+    const cleaned = (str || "")
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/^[.,;:!?…"'()\-\s]+|[.,;:!?…"'()\-\s]+$/g, "");
+    return stripDiacritics(cleaned);
   }
 
   function meaningMatches(userInput, correctField) {
     const norm = normalizeLoose(userInput || "");
     if (!norm) return false;
     const candidates = (correctField || "")
-      .split(/[\/,;]/)
+      .split(/[\/,;]|\.\.\.|…/)
       .map((s) => normalizeLoose(s))
       .filter(Boolean);
     return candidates.includes(norm);
@@ -699,6 +710,15 @@
       return;
     }
     els.quizStartError.textContent = "";
+    // Hỏi mật khẩu mỗi lần bắt đầu 1 phiên kiểm tra mới. Nhập đúng -> điểm
+    // được ghi lên Sheet; bỏ trống -> vẫn làm bài, tính điểm bình thường,
+    // chỉ là không ghi lên Sheet.
+    els.quizPasswordInput.value = APP_PASSWORD || "";
+    els.quizPasswordModal.classList.remove("hidden");
+    setTimeout(() => els.quizPasswordInput.focus(), 50);
+  }
+
+  function beginQuizSession() {
     const pool = filteredWords().filter((w) => masteryNum(w) < MASTERY_MAX);
     if (pool.length === 0) {
       els.quizStart.classList.add("hidden");
@@ -706,6 +726,7 @@
       els.quizDone.classList.remove("hidden");
       els.quizDoneTitle.textContent = "Chủ đề này đã thuộc hết! 🎉";
       els.quizDoneDesc.textContent = "Tất cả các từ trong chủ đề đã đạt mức thuộc tối đa.";
+      els.quizDoneMissed.innerHTML = "";
       return;
     }
     quizQueue = pool.slice();
@@ -715,6 +736,7 @@
     }
     quizCorrectCount = 0;
     quizTotalCount = 0;
+    missedWords = [];
     els.quizStart.classList.add("hidden");
     els.quizDone.classList.add("hidden");
     els.quizSession.classList.remove("hidden");
@@ -727,14 +749,24 @@
       els.quizSession.classList.add("hidden");
       els.quizDone.classList.remove("hidden");
       els.quizDoneTitle.textContent = "Hoàn thành phiên kiểm tra! 🎉";
-      els.quizDoneDesc.textContent = `Bạn đã trả lời đúng ${quizCorrectCount}/${quizTotalCount} lượt trong chủ đề này.`;
+      els.quizDoneDesc.textContent = `Bạn đã trả lời đúng ${quizCorrectCount}/${quizTotalCount} lượt trong chủ đề này.` +
+        (syncEnabled ? "" : " (Chưa lưu lên Sheet vì không nhập mật khẩu.)");
+      if (missedWords.length === 0) {
+        els.quizDoneMissed.innerHTML = "";
+      } else {
+        const items = missedWords.map((w) =>
+          `<li><span class="hz">${w[FIELD.WORD]}</span><span class="mn">${w[FIELD.PINYIN]} — ${w[FIELD.MEANING]}</span></li>`
+        ).join("");
+        els.quizDoneMissed.innerHTML = `
+          <p class="missed-title">Các từ đã trả lời sai (nên ôn lại):</p>
+          <ul class="missed-list">${items}</ul>`;
+      }
       return;
     }
     const word = quizQueue[0];
     const types = QUIZ_TYPES_BASE.slice();
     if ((word[FIELD.EXAMPLE] || "").toString().trim()) types.push("listenExample");
     if (els.hanVietToggle.checked && (word[FIELD.HAN_VIET] || "").toString().trim()) types.push("hanVietToBoth");
-    if (els.posToggle.checked && (word[FIELD.POS] || "").toString().trim()) types.push("wordToPOS");
     const type = types[Math.floor(Math.random() * types.length)];
     currentQuestion = { word, type };
     renderQuestion();
@@ -823,13 +855,6 @@
     } else if (type === "hanVietToBoth") {
       els.quizPromptTag.textContent = FIELD.HAN_VIET;
       renderRecallBothQuestion(word, handwrite, word[FIELD.HAN_VIET]);
-    } else if (type === "wordToPOS") {
-      els.quizPromptTag.textContent = FIELD.WORD;
-      els.quizPromptText.textContent = word[FIELD.WORD];
-      fitText(els.quizPromptText, word[FIELD.WORD], 56);
-      els.quizAnswers.innerHTML = `
-        <label for="ansPOS">Gõ lại LOẠI TỪ</label>
-        <input type="text" id="ansPOS" class="text-input" autocomplete="off">`;
     } else if (type === "listenWord") {
       els.quizPromptTag.textContent = "NGHE TỪ";
       els.quizPromptText.textContent = "🔊";
@@ -961,10 +986,6 @@
       correct = wOk && mOk;
       correctSummary = `Từ đúng: ${word[FIELD.WORD]} — Nghĩa đúng: ${word[FIELD.MEANING]}` +
         wordNote + (!mOk ? " (bạn gõ sai nghĩa)" : "");
-    } else if (type === "wordToPOS") {
-      const val = $("ansPOS") ? $("ansPOS").value : "";
-      correct = meaningMatches(val, word[FIELD.POS]);
-      correctSummary = `Loại từ đúng: ${word[FIELD.POS]}`;
     } else if (type === "listenWord") {
       const val = $("ansListenWord") ? $("ansListenWord").value : "";
       correct = wordMatches(val, word[FIELD.WORD]);
@@ -990,20 +1011,21 @@
       els.feedbackVerdict.textContent = "✓ Chính xác!";
       els.feedbackVerdict.className = "feedback-verdict correct";
       els.feedbackCorrect.textContent = "";
-      try {
-        const res = await apiPost({ action: "incrementMastery", row: word._row });
-        word[FIELD.MASTERY] = res.newValue;
-      } catch (err) {
-        if (err.authError) {
-          showToast(APP_PASSWORD
-            ? "Sai mật khẩu — điểm chỉ tính tạm trên máy, chưa ghi lên Sheet."
-            : "Chưa nhập mật khẩu — điểm chỉ tính tạm trên máy, chưa ghi lên Sheet.");
-        } else {
-          showToast("Không đồng bộ được lên Sheet: " + err.message);
+      if (syncEnabled) {
+        try {
+          const res = await apiPost({ action: "incrementMastery", row: word._row });
+          word[FIELD.MASTERY] = res.newValue;
+        } catch (err) {
+          if (err.authError) {
+            showToast("Sai mật khẩu — điểm chỉ tính tạm trên máy, chưa ghi lên Sheet.");
+          } else {
+            showToast("Không đồng bộ được lên Sheet: " + err.message);
+          }
         }
       }
     } else {
       quizQueue.push(word); // hỏi lại sau trong cùng phiên
+      if (!missedWords.some((w) => w._row === word._row)) missedWords.push(word);
       els.feedbackVerdict.textContent = "✗ Chưa đúng";
       els.feedbackVerdict.className = "feedback-verdict incorrect";
       els.feedbackCorrect.textContent = correctSummary;
@@ -1015,20 +1037,16 @@
 
   // ================= Events =================
   els.saveApiUrlBtn.addEventListener("click", async () => {
-    if (!els.apiUrlInput.classList.contains("hidden")) {
-      const url = els.apiUrlInput.value.trim();
-      if (!url.startsWith("https://script.google.com/")) {
-        els.setupError.textContent = "URL không hợp lệ. Phải bắt đầu bằng https://script.google.com/";
-        return;
-      }
-      API_URL = url;
+    const url = els.apiUrlInput.value.trim();
+    if (!url.startsWith("https://script.google.com/")) {
+      els.setupError.textContent = "URL không hợp lệ. Phải bắt đầu bằng https://script.google.com/";
+      return;
     }
-    APP_PASSWORD = els.passwordInput.value;
+    API_URL = url;
     els.setupError.textContent = "Đang kết nối…";
     const ok = await loadData(false);
     if (ok) {
       if (!HARDCODED_API_URL) localStorage.setItem(CONFIG_KEY, API_URL);
-      localStorage.setItem(PASSWORD_KEY, APP_PASSWORD);
       els.setupModal.classList.add("hidden");
       els.app.classList.remove("hidden");
     } else {
@@ -1036,17 +1054,18 @@
     }
   });
 
-  els.settingsBtn.addEventListener("click", () => {
-    els.apiUrlInput.classList.toggle("hidden", !!HARDCODED_API_URL);
-    els.apiUrlInput.value = API_URL;
-    els.passwordInput.value = APP_PASSWORD;
-    els.setupTitle.textContent = "Cài đặt kết nối";
-    els.setupDesc.textContent = HARDCODED_API_URL
-      ? "Mật khẩu (nếu có) chỉ dùng để ghi điểm kiểm tra lên Sheet. Không nhập vẫn làm bài và tính điểm bình thường, chỉ là không đồng bộ lên Sheet."
-      : "Dán URL Apps Script Web App bạn đã deploy từ Sheet \"HSK\" vào đây. Xem hướng dẫn trong file backend-apps-script.gs.txt đi kèm. Mật khẩu chỉ dùng để ghi điểm lên Sheet, không bắt buộc.";
-    els.setupError.textContent = "";
-    els.setupModal.classList.remove("hidden");
-  });
+  if (HARDCODED_API_URL) {
+    els.settingsBtn.classList.add("hidden"); // URL đã cố định, không còn gì để chỉnh qua đây nữa
+  } else {
+    els.settingsBtn.addEventListener("click", () => {
+      els.apiUrlInput.classList.remove("hidden");
+      els.apiUrlInput.value = API_URL;
+      els.setupTitle.textContent = "Cài đặt kết nối";
+      els.setupDesc.textContent = "Dán URL Apps Script Web App bạn đã deploy từ Sheet \"HSK\" vào đây. Xem hướng dẫn trong file backend-apps-script.gs.txt đi kèm.";
+      els.setupError.textContent = "";
+      els.setupModal.classList.remove("hidden");
+    });
+  }
 
   els.refreshBtn.addEventListener("click", () => loadData(true));
 
@@ -1057,16 +1076,9 @@
   els.topicFilter.addEventListener("change", buildFlashcardDeck);
   els.pinyinToggle.addEventListener("change", buildFlashcardDeck);
   const HAN_VIET_TOGGLE_KEY = "hsk-app-hanviet-toggle";
-  const POS_TOGGLE_KEY = "hsk-app-pos-toggle";
   els.hanVietToggle.checked = localStorage.getItem(HAN_VIET_TOGGLE_KEY) === "1";
-  els.posToggle.checked = localStorage.getItem(POS_TOGGLE_KEY) === "1";
   els.hanVietToggle.addEventListener("change", () => {
     localStorage.setItem(HAN_VIET_TOGGLE_KEY, els.hanVietToggle.checked ? "1" : "0");
-    buildFlashcardDeck();
-  });
-  els.posToggle.addEventListener("change", () => {
-    localStorage.setItem(POS_TOGGLE_KEY, els.posToggle.checked ? "1" : "0");
-    buildFlashcardDeck();
   });
 
   els.tabs.addEventListener("click", (e) => {
@@ -1117,6 +1129,18 @@
   });
 
   els.startQuizBtn.addEventListener("click", startQuiz);
+  els.quizPasswordConfirmBtn.addEventListener("click", () => {
+    APP_PASSWORD = els.quizPasswordInput.value.trim();
+    localStorage.setItem(PASSWORD_KEY, APP_PASSWORD);
+    syncEnabled = !!APP_PASSWORD;
+    els.quizPasswordModal.classList.add("hidden");
+    beginQuizSession();
+  });
+  els.quizPasswordSkipBtn.addEventListener("click", () => {
+    syncEnabled = false;
+    els.quizPasswordModal.classList.add("hidden");
+    beginQuizSession();
+  });
   els.quizSpeakBtn.addEventListener("click", () => {
     if (!currentQuestion) return;
     const { word, type } = currentQuestion;

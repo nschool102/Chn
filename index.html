@@ -24,11 +24,22 @@
   <div class="modal">
     <div class="brand-seal lg">习</div>
     <h2 id="setupTitle">Kết nối tới Google Sheet</h2>
-    <p class="modal-desc" id="setupDesc">Dán URL Apps Script Web App bạn đã deploy từ Sheet "HSK" vào đây. Xem hướng dẫn trong file <b>backend-apps-script.gs.txt</b> đi kèm. Mật khẩu chỉ dùng để ghi điểm kiểm tra lên Sheet, không bắt buộc để đọc/làm bài.</p>
+    <p class="modal-desc" id="setupDesc">Dán URL Apps Script Web App bạn đã deploy từ Sheet "HSK" vào đây. Xem hướng dẫn trong file <b>backend-apps-script.gs.txt</b> đi kèm.</p>
     <input type="text" id="apiUrlInput" class="text-input hidden" placeholder="https://script.google.com/macros/s/…/exec">
-    <input type="password" id="passwordInput" class="text-input" placeholder="Mật khẩu ghi điểm (tùy chọn, để trống nếu không cần đồng bộ Sheet)" autocomplete="off">
     <button class="primary-btn" id="saveApiUrlBtn">Lưu &amp; Kết nối</button>
     <p class="modal-error" id="setupError"></p>
+  </div>
+</div>
+
+<!-- QUIZ PASSWORD POPUP -->
+<div class="modal-overlay hidden" id="quizPasswordModal">
+  <div class="modal">
+    <div class="brand-seal lg">🔑</div>
+    <h2>Lưu kết quả lên Sheet?</h2>
+    <p class="modal-desc">Nhập mật khẩu để ghi điểm (cột OK) lên Google Sheet. Bỏ qua vẫn làm bài và tính điểm bình thường, chỉ là không lưu.</p>
+    <input type="password" id="quizPasswordInput" class="text-input" placeholder="Mật khẩu (để trống nếu không cần lưu)" autocomplete="off">
+    <button class="primary-btn" id="quizPasswordConfirmBtn">Bắt đầu &amp; lưu kết quả</button>
+    <button class="ghost-btn" id="quizPasswordSkipBtn" style="width:100%;margin-top:8px;">Bỏ qua, không lưu</button>
   </div>
 </div>
 
@@ -66,13 +77,7 @@
   <label class="pinyin-toggle">
     <input type="checkbox" id="hanVietToggle">
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    <span class="toggle-label">Bao gồm Hán Việt trong flashcard &amp; kiểm tra</span>
-  </label>
-
-  <label class="pinyin-toggle">
-    <input type="checkbox" id="posToggle">
-    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    <span class="toggle-label">Bao gồm Loại từ trong flashcard &amp; kiểm tra</span>
+    <span class="toggle-label">Bao gồm Hán Việt trong bài kiểm tra</span>
   </label>
 
   <label class="pinyin-toggle" id="handwriteToggleWrap">
@@ -106,18 +111,22 @@
       <div class="card" id="flashcard">
         <div class="card-face card-front">
           <span class="format-tag" id="frontTag">TỪ VỰNG</span>
+          <span class="record-no-tag" id="frontNoTag"></span>
           <button class="stamp" id="speakFrontBtn" aria-label="Phát âm">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
           </button>
           <div class="hanzi-display" id="frontText">…</div>
+          <span class="pos-tag hidden" id="frontPosTag"></span>
           <p class="tap-hint">Chạm để xem mặt sau</p>
         </div>
         <div class="card-face card-back">
           <span class="format-tag" id="backTag">NGHĨA</span>
+          <span class="record-no-tag" id="backNoTag"></span>
           <button class="stamp" id="speakBackBtn" aria-label="Phát âm">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
           </button>
           <div class="hanzi-small" id="backText">…</div>
+          <span class="pos-tag hidden" id="backPosTag"></span>
         </div>
       </div>
     </div>
@@ -134,7 +143,7 @@
   <section class="view hidden" id="view-quiz">
 
     <div class="quiz-start" id="quizStart">
-      <p class="quiz-hint">Kiểm tra sẽ chỉ dùng <b>1 chủ đề</b> đang chọn ở trên, gồm cả dạng <b>nghe và gõ lại</b>. Trả lời đúng → cột OK +1. Đạt 5 thì coi như đã thuộc.</p>
+      <p class="quiz-hint">Kiểm tra sẽ chỉ dùng <b>1 chủ đề</b> đang chọn ở trên, gồm cả dạng <b>nghe và gõ lại</b>. Bấm bắt đầu sẽ hỏi mật khẩu — nhập đúng thì trả lời đúng sẽ +1 cột OK trên Sheet; bỏ qua vẫn làm bài, tính điểm bình thường, chỉ không lưu lên Sheet.</p>
       <button class="primary-btn" id="startQuizBtn">Bắt đầu kiểm tra</button>
       <p class="modal-error" id="quizStartError"></p>
     </div>
@@ -177,6 +186,7 @@
       <div class="brand-seal lg ok">✓</div>
       <h2 id="quizDoneTitle">Hoàn thành!</h2>
       <p id="quizDoneDesc"></p>
+      <div id="quizDoneMissed"></div>
       <button class="primary-btn" id="quizRestartBtn">Về màn hình bắt đầu</button>
     </div>
   </section>

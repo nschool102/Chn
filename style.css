@@ -129,6 +129,17 @@ input, select { font-family: inherit; }
   border-radius: 999px; letter-spacing: 0.02em;
 }
 
+.record-no-tag {
+  position: absolute; top: 44px; left: 18px; font-size: 10px; font-weight: 600;
+  color: var(--ink-soft); letter-spacing: 0.02em;
+}
+
+.pos-tag {
+  margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--gold);
+  background: rgba(201,162,39,0.14); padding: 4px 12px; border-radius: 999px;
+  display: inline-block;
+}
+
 .stamp {
   position: absolute; top: 12px; right: 12px; width: 40px; height: 40px;
   border-radius: 10px; background: var(--seal); color: var(--paper);
@@ -243,6 +254,19 @@ input, select { font-family: inherit; }
 .quiz-done { text-align: center; padding: 40px 10px; }
 .quiz-done h2 { font-size: 19px; margin: 0 0 8px; }
 .quiz-done p { font-size: 13px; color: var(--ink-soft); margin: 0 0 22px; }
+
+.missed-title { font-size: 12px; font-weight: 700; color: var(--seal-deep); margin: 0 0 10px; text-align: left; }
+.missed-list {
+  list-style: none; margin: 0 0 22px; padding: 0; text-align: left;
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 260px; overflow-y: auto;
+}
+.missed-list li {
+  display: flex; align-items: baseline; gap: 10px; background: var(--paper-deep);
+  border-radius: 12px; padding: 10px 14px;
+}
+.missed-list .hz { font-family: var(--font-display); font-weight: 700; font-size: 20px; flex-shrink: 0; }
+.missed-list .mn { font-size: 13px; color: var(--ink-soft); }
 
 /* ---- Toast ---- */
 .toast {
