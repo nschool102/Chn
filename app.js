@@ -5,49 +5,42 @@
   // Dán URL Apps Script Web App của bạn vào giữa 2 dấu ngoặc kép dưới đây.
   // Làm 1 lần duy nhất — app sẽ luôn dùng URL này, không cần dán lại kể cả
   // khi xóa cache trình duyệt hay dùng trên thiết bị khác.
-  const HARDCODED_API_URL = "https://script.google.com/macros/s/AKfycbygKvrnfLeaQE6UTV21t8ukge6OCczl-gpU95X-nXricvXvwuEMODv6Tf825ahwNgopJQ/exec";
+  const HARDCODED_API_URL = "";
 
   const CONFIG_KEY = "hsk-app-api-url"; // chỉ dùng dự phòng nếu chưa nhúng URL ở trên
   const PASSWORD_KEY = "hsk-app-password";
   let API_URL = HARDCODED_API_URL || localStorage.getItem(CONFIG_KEY) || "";
   let APP_PASSWORD = localStorage.getItem(PASSWORD_KEY) || "";
 
-  const FIELD = {
-    LEVEL: "LEVEL",
-    STT: "No.",
+  // ================= Field maps (tên cột "chuẩn" cho từng sheet) =================
+  const HSK_FIELD = {
+    ID: "VOCAB_ID",
     WORD: "VOCAB",
     PINYIN: "PINYIN",
     POS: "PART-OF-SPEECH",
     MEANING: "MEANING",
-    HAN_VIET: "HAN-VIET",
-    TOPIC: "TOPIC",
     EXAMPLE: "EXAMPLE",
     EXAMPLE_PINYIN: "EXAMPLE PINYIN",
     EXAMPLE_MEANING: "EXAMPLE MEANING",
-    MASTERY: "OK",
+    LEVEL: "LEVEL",
+    HAN_VIET: "HAN-VIET",
+    TOPIC: "TOPIC",
+  };
+  const GT_FIELD = {
+    ID: "SENT_ID",
+    CHN: "CHN",
+    PINYIN: "PINYIN",
+    VIE: "VIE",
+    TOPIC: "TOPIC",
   };
 
-  // Flashcard chỉ dùng đúng 8 kiểu mặt trước/sau này (cố định, không phụ
-  // thuộc toggle Hán Việt/Loại từ nữa). Toggle Pinyin quyết định có thêm
-  // 4 kiểu liên quan tới pinyin hay chỉ dùng 4 kiểu nghĩa/ví dụ cơ bản.
-  const FLASHCARD_FORMATS_BASE = [
-    [FIELD.MEANING, FIELD.WORD], [FIELD.WORD, FIELD.MEANING],
-    [FIELD.EXAMPLE, FIELD.EXAMPLE_MEANING], [FIELD.EXAMPLE_MEANING, FIELD.EXAMPLE],
-  ];
-  const FLASHCARD_FORMATS_PINYIN_EXTRA = [
-    [FIELD.WORD, FIELD.PINYIN], [FIELD.PINYIN, FIELD.WORD],
-    [FIELD.EXAMPLE, FIELD.EXAMPLE_PINYIN], [FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE],
-  ];
-  // Các field thuộc "câu ví dụ" — thẻ có mặt nào rơi vào nhóm này thì không
-  // hiện nhãn Loại từ (Part-of-speech vốn chỉ áp dụng cho từ vựng đơn lẻ).
-  const EXAMPLE_FIELDS = [FIELD.EXAMPLE, FIELD.EXAMPLE_PINYIN, FIELD.EXAMPLE_MEANING];
-
-  let ALL_WORDS = [];
+  let ALL_HSK_WORDS = [];
+  let ALL_GT_SENTENCES = [];
+  let PROGRESS_MAP = {}; // id -> OK (số)
   let MASTERY_MAX = 5;
 
   // So khớp tên cột kiểu "khoan dung": bỏ dấu tiếng Việt, không phân biệt
-  // hoa/thường, bỏ khoảng trắng thừa. Nhờ vậy dù cột trong Sheet ghi
-  // "Từ vựng", "TỪ VỰNG ", hay dùng font gõ dấu khác cũng vẫn nhận ra.
+  // hoa/thường, bỏ hết ký tự không phải chữ/số.
   function stripDiacritics(s) {
     return (s || "")
       .toString()
@@ -61,8 +54,59 @@
   function normStr(s) {
     return (s || "").toString().normalize("NFC").trim();
   }
-  function getLevel(w) { return normStr(w[FIELD.LEVEL]); }
-  function getTopic(w) { return normStr(w[FIELD.TOPIC]); }
+
+  // Ánh xạ mảng row thô (key = tên cột thật trong Sheet) sang key chuẩn theo
+  // fieldMap, dùng so khớp khoan dung (bỏ dấu/hoa-thường/khoảng trắng).
+  function remapRows(rawRows, rawHeaders, fieldMap) {
+    const canonicalNames = Object.values(fieldMap);
+    const headerMap = {};
+    canonicalNames.forEach((canon) => {
+      const target = keyNorm(canon);
+      const found = rawHeaders.find((h) => keyNorm(h) === target);
+      if (found) headerMap[canon] = found;
+    });
+    return rawRows.map((row) => {
+      const obj = {};
+      canonicalNames.forEach((canon) => {
+        const actualKey = headerMap[canon];
+        obj[canon] = actualKey ? row[actualKey] : "";
+      });
+      obj._row = row._row;
+      return obj;
+    });
+  }
+
+  function masteryNum(id) {
+    const v = PROGRESS_MAP[id];
+    return typeof v === "number" && !isNaN(v) ? v : 0;
+  }
+
+  // ================= Unified study item =================
+  // { id, kind: 'vocab'|'example'|'sentence', hanzi, pinyin, meaning, pos, hanViet, topic, level }
+  function hskRowToVocabItem(row) {
+    return {
+      id: normStr(row[HSK_FIELD.ID]), kind: "vocab",
+      hanzi: row[HSK_FIELD.WORD], pinyin: row[HSK_FIELD.PINYIN],
+      pos: row[HSK_FIELD.POS], meaning: row[HSK_FIELD.MEANING], hanViet: row[HSK_FIELD.HAN_VIET],
+      topic: row[HSK_FIELD.TOPIC], level: row[HSK_FIELD.LEVEL],
+    };
+  }
+  function hskRowToExampleItem(row) {
+    return {
+      id: normStr(row[HSK_FIELD.ID]), kind: "example",
+      hanzi: row[HSK_FIELD.EXAMPLE], pinyin: row[HSK_FIELD.EXAMPLE_PINYIN],
+      pos: "", meaning: row[HSK_FIELD.EXAMPLE_MEANING], hanViet: "",
+      topic: row[HSK_FIELD.TOPIC], level: row[HSK_FIELD.LEVEL],
+    };
+  }
+  function gtRowToSentenceItem(row) {
+    return {
+      id: normStr(row[GT_FIELD.ID]), kind: "sentence",
+      hanzi: row[GT_FIELD.CHN], pinyin: row[GT_FIELD.PINYIN],
+      pos: "", meaning: row[GT_FIELD.VIE], hanViet: "",
+      topic: row[GT_FIELD.TOPIC], level: "",
+    };
+  }
 
   // ================= DOM =================
   const $ = (id) => document.getElementById(id);
@@ -73,6 +117,7 @@
     app: $("app"), dataStatus: $("dataStatus"),
     refreshBtn: $("refreshBtn"), settingsBtn: $("settingsBtn"),
     levelFilter: $("levelFilter"), topicFilter: $("topicFilter"),
+    contentTypeFilter: $("contentTypeFilter"),
     pinyinToggle: $("pinyinToggle"), hanVietToggle: $("hanVietToggle"),
     handwriteToggle: $("handwriteToggle"),
     handwriteToggleWrap: $("handwriteToggleWrap"),
@@ -80,10 +125,11 @@
     tabs: $("tabs"),
     viewCard: $("view-card"), viewQuiz: $("view-quiz"),
     shuffleBtn: $("shuffleBtn"), cardProgressLabel: $("cardProgressLabel"),
-    flashcard: $("flashcard"), frontTag: $("frontTag"), frontText: $("frontText"),
-    backTag: $("backTag"), backText: $("backText"),
-    frontNoTag: $("frontNoTag"), backNoTag: $("backNoTag"),
+    flashcard: $("flashcard"),
+    frontText: $("frontText"), backText: $("backText"),
+    frontIdTag: $("frontIdTag"), backIdTag: $("backIdTag"),
     frontPosTag: $("frontPosTag"), backPosTag: $("backPosTag"),
+    frontHanVietLine: $("frontHanVietLine"), backPinyinLine: $("backPinyinLine"),
     speakFrontBtn: $("speakFrontBtn"), speakBackBtn: $("speakBackBtn"),
     prevBtn: $("prevBtn"), nextBtn: $("nextBtn"),
     quizStart: $("quizStart"), quizStartError: $("quizStartError"), startQuizBtn: $("startQuizBtn"),
@@ -124,7 +170,6 @@
     pickVoice();
     speechSynthesis.onvoiceschanged = pickVoice;
   }
-
   function speak(text) {
     if (!text) return;
     if (!("speechSynthesis" in window)) {
@@ -139,16 +184,7 @@
     speechSynthesis.speak(utter);
   }
 
-  // Với 1 mặt thẻ (front/back là tên field), chọn đúng đoạn tiếng Trung cần đọc:
-  // field thuộc nhóm ví dụ -> đọc câu ví dụ; còn lại -> đọc từ vựng.
-  function audioTextForField(word, field) {
-    if (field === FIELD.EXAMPLE || field === FIELD.EXAMPLE_PINYIN || field === FIELD.EXAMPLE_MEANING) {
-      return (word[FIELD.EXAMPLE] || "").toString().trim();
-    }
-    return (word[FIELD.WORD] || "").toString().trim();
-  }
-
-  // ================= Handwriting pad (vẽ chữ Hán bằng bút/ngón tay) =================
+  // ================= Handwriting pad (canvas dự phòng) =================
   const HANDWRITE_KEY = "hsk-app-handwrite";
   const HINT_OUTLINE_KEY = "hsk-app-hint-outline";
   els.handwriteToggle.checked = localStorage.getItem(HANDWRITE_KEY) === "1";
@@ -158,7 +194,6 @@
     els.hintOutlineWrap.classList.toggle("hidden", !els.handwriteToggle.checked);
   }
   syncHintOutlineVisibility();
-
   els.handwriteToggle.addEventListener("change", () => {
     localStorage.setItem(HANDWRITE_KEY, els.handwriteToggle.checked ? "1" : "0");
     syncHintOutlineVisibility();
@@ -169,6 +204,9 @@
 
   function charCountFor(text) {
     return (text || "").toString().trim().length || 1;
+  }
+  function charsOf(text) {
+    return Array.from((text || "").toString().trim());
   }
 
   function handwritePadHtml(canvasId) {
@@ -222,9 +260,6 @@
     ctx.restore();
   }
 
-  // Gắn Pointer Events (chuột/ngón tay/Apple Pencil đều dùng chung API này) lên canvas.
-  // Đồng thời đếm số nét (mỗi lần nhấc bút = 1 nét) và tổng độ dài mực đã vẽ,
-  // dùng làm ngưỡng chặn kiểu "vẽ nguệch ngoạc rồi bấm đúng".
   function initHandwriteCanvas(canvasEl, targetText, onChange, showHint) {
     const dpr = window.devicePixelRatio || 1;
     const charCount = charCountFor(targetText);
@@ -298,18 +333,10 @@
     canvasEl._clearHandwrite = resize;
   }
 
-  // Ngưỡng tối thiểu "chấp nhận được" cho 1 lượt viết tay: không phải nhận
-  // diện nét đúng/sai thật sự (không có OCR), chỉ chặn kiểu vẽ 1 nét nguệch
-  // ngoạc qua loa rồi tự nhận là đúng.
   function handwriteThreshold(charCount) {
-    return {
-      minStrokes: Math.max(2, charCount),
-      minLength: charCount * 45,
-    };
+    return { minStrokes: Math.max(2, charCount), minLength: charCount * 45 };
   }
 
-  // Chèn bảng vẽ vào 1 container, tự dò kích thước sau khi đã nằm trong DOM.
-  // Trả về hàm kiểm tra "đã viết đủ chưa" để dùng khi bấm Xem đáp án.
   function mountHandwritePad(container, canvasId, targetText) {
     const canvasEl = container.querySelector("#" + canvasId);
     const counterEl = container.querySelector("#" + canvasId + "-counter");
@@ -338,16 +365,8 @@
     };
   }
 
-  // ================= HanziWriter (nhận diện nét vẽ thật, miễn phí, chạy trong trình duyệt) =================
-  // Thư viện mã nguồn mở hanzi-writer (MIT) có sẵn dữ liệu nét chuẩn cho hàng
-  // nghìn chữ Hán và biết chấm đúng/sai từng nét (đúng hướng, đúng thứ tự) —
-  // không cần API key, không tốn phí. Nếu thư viện không tải được (offline)
-  // hoặc dữ liệu 1 ký tự nào đó lỗi, tự động rơi về bảng vẽ tự chấm ở trên.
+  // ================= HanziWriter (nhận diện nét vẽ thật) =================
   const HANZI_WRITER_READY = typeof window.HanziWriter !== "undefined";
-
-  function charsOf(text) {
-    return Array.from((text || "").toString().trim());
-  }
 
   function renderHanziQuizHtml(chars) {
     const boxes = chars.map((c, i) => `<div class="hanzi-quiz-target" id="hzTarget-${i}"></div>`).join("");
@@ -360,8 +379,6 @@
       </div>`;
   }
 
-  // Gắn HanziWriter cho các ô đã có sẵn trong container (do renderHanziQuizHtml tạo).
-  // cbs: { onComplete(), onSkip(), onLoadError() }
   function mountHanziQuiz(container, chars, cbs) {
     let completed = 0;
     let failed = false;
@@ -408,8 +425,6 @@
       });
     });
 
-    // Lưới an toàn: nếu sau vài giây ô nào đó vẫn trống trơn (dữ liệu không tải
-    // được nhưng callback lỗi không bắn ra vì lý do gì đó), coi như lỗi tải.
     setTimeout(() => {
       if (failed || completed >= chars.length) return;
       const anyEmpty = chars.some((_, i) => {
@@ -437,9 +452,6 @@
     }
   }
 
-  // Hàm dùng chung cho các câu hỏi chỉ cần viết 1 chuỗi chữ Hán rồi tự động
-  // chấm (không cần bấm nút): thử HanziWriter trước, lỗi thì rơi về canvas.
-  // cbs: { onComplete(), onSkip(), onFallbackCanvas(isSufficientFn) }
   function setupHandwritingAnswer(container, targetText, cbs) {
     const chars = charsOf(targetText);
     if (HANZI_WRITER_READY && chars.length > 0) {
@@ -449,14 +461,14 @@
         onSkip: cbs.onSkip,
         onLoadError: () => {
           container.innerHTML = handwritePadHtml("hwCanvas");
-          const isSufficient = mountHandwritePad(container, "hwCanvas", targetText);
+          const isSufficient = mountHandwritePad(container, "hwCanvas", charCountFor(targetText));
           cbs.onFallbackCanvas(isSufficient);
           showToast("Không tải được dữ liệu nét chữ cho ký tự này, chuyển sang bảng vẽ tự chấm.");
         },
       });
     } else {
       container.innerHTML = handwritePadHtml("hwCanvas");
-      const isSufficient = mountHandwritePad(container, "hwCanvas", targetText);
+      const isSufficient = mountHandwritePad(container, "hwCanvas", charCountFor(targetText));
       cbs.onFallbackCanvas(isSufficient);
     }
   }
@@ -484,52 +496,18 @@
     return json;
   }
 
-  function masteryNum(w) {
-    const v = w[FIELD.MASTERY];
-    if (v === "" || v === null || typeof v === "undefined" || isNaN(v)) return 0;
-    return Number(v);
-  }
-
   // ================= Load data =================
   async function loadData(showLoadingToast) {
     els.dataStatus.textContent = "Đang tải…";
     try {
       const json = await apiGet();
-      const rawRows = json.rows || [];
-      const rawHeaders = json.headers && json.headers.length
-        ? json.headers
-        : (rawRows[0] ? Object.keys(rawRows[0]) : []);
-
-      // Ánh xạ mỗi tên cột "chuẩn" (FIELD.*) tới tên cột thật tìm thấy trong Sheet
-      const canonicalNames = Object.values(FIELD);
-      const headerMap = {}; // canonical -> actual header key in the raw data
-      const unmatched = [];
-      canonicalNames.forEach((canon) => {
-        const target = keyNorm(canon);
-        const found = rawHeaders.find((h) => keyNorm(h) === target);
-        if (found) headerMap[canon] = found;
-        else unmatched.push(canon);
-      });
-
-      ALL_WORDS = rawRows.map((row) => {
-        const obj = {};
-        canonicalNames.forEach((canon) => {
-          const actualKey = headerMap[canon];
-          obj[canon] = actualKey ? row[actualKey] : "";
-        });
-        obj._row = row._row;
-        return obj;
-      });
-
+      ALL_HSK_WORDS = remapRows(json.hskRows || [], json.hskHeaders || [], HSK_FIELD);
+      ALL_GT_SENTENCES = remapRows(json.giaoTiepRows || [], json.giaoTiepHeaders || [], GT_FIELD);
+      PROGRESS_MAP = {};
+      Object.keys(json.progress || {}).forEach((k) => { PROGRESS_MAP[k] = Number(json.progress[k]) || 0; });
       MASTERY_MAX = json.masteryMax || 5;
 
-      if (unmatched.length) {
-        showToast("Không tìm thấy cột: " + unmatched.join(", ") + ". Cột có trong Sheet: " + rawHeaders.join(", "));
-      }
-      if (ALL_WORDS.length && !ALL_WORDS.some((w) => getTopic(w))) {
-        console.warn("Không tìm thấy giá trị nào ở cột CHỦ ĐỀ. Kiểm tra lại tên cột trong Sheet.");
-      }
-      els.dataStatus.textContent = `${ALL_WORDS.length} từ đã tải`;
+      els.dataStatus.textContent = `${ALL_HSK_WORDS.length} từ HSK · ${ALL_GT_SENTENCES.length} câu giao tiếp`;
       populateFilters();
       buildFlashcardDeck();
       if (showLoadingToast) showToast("Đã cập nhật dữ liệu mới nhất");
@@ -542,34 +520,49 @@
   }
 
   // ================= Filters =================
+  function isGiaoTiep() {
+    return els.levelFilter.value === "giaotiep";
+  }
+
   function populateFilters() {
-    const levels = [...new Set(ALL_WORDS.map(getLevel).filter(Boolean))].sort();
-    const prevLevel = els.levelFilter.value;
-    els.levelFilter.innerHTML = "";
-    const allOpt = document.createElement("option");
-    allOpt.value = "all";
-    allOpt.textContent = "Tất cả cấp độ";
-    els.levelFilter.appendChild(allOpt);
+    // Giữ 2 option cố định (Giao tiếp, Tất cả cấp độ), chỉ thêm các HSK level động
+    const prevLevel = els.levelFilter.value || "giaotiep";
+    [...els.levelFilter.querySelectorAll("option")].forEach((opt) => {
+      if (opt.value !== "giaotiep" && opt.value !== "all") opt.remove();
+    });
+    const levels = [...new Set(ALL_HSK_WORDS.map((w) => normStr(w[HSK_FIELD.LEVEL])).filter(Boolean))].sort();
     levels.forEach((lv) => {
       const opt = document.createElement("option");
       opt.value = lv;
       opt.textContent = lv;
       els.levelFilter.appendChild(opt);
     });
-    if (levels.includes(prevLevel) || prevLevel === "all") els.levelFilter.value = prevLevel;
+    const validValues = ["giaotiep", "all", ...levels];
+    els.levelFilter.value = validValues.includes(prevLevel) ? prevLevel : "giaotiep";
+    syncContentTypeDisabled();
     populateTopics();
   }
 
+  function syncContentTypeDisabled() {
+    els.contentTypeFilter.disabled = isGiaoTiep();
+  }
+
   function populateTopics() {
-    const level = els.levelFilter.value || "all";
-    const pool = level === "all" ? ALL_WORDS : ALL_WORDS.filter((w) => getLevel(w) === level);
-    const topics = [...new Set(pool.map(getTopic).filter(Boolean))].sort();
     const prevTopic = els.topicFilter.value;
     els.topicFilter.innerHTML = "";
     const allOpt = document.createElement("option");
     allOpt.value = "all";
     allOpt.textContent = "Tất cả chủ đề";
     els.topicFilter.appendChild(allOpt);
+
+    let topics;
+    if (isGiaoTiep()) {
+      topics = [...new Set(ALL_GT_SENTENCES.map((s) => normStr(s[GT_FIELD.TOPIC])).filter(Boolean))].sort();
+    } else {
+      const level = els.levelFilter.value;
+      const pool = level === "all" ? ALL_HSK_WORDS : ALL_HSK_WORDS.filter((w) => normStr(w[HSK_FIELD.LEVEL]) === level);
+      topics = [...new Set(pool.map((w) => normStr(w[HSK_FIELD.TOPIC])).filter(Boolean))].sort();
+    }
     topics.forEach((t) => {
       const opt = document.createElement("option");
       opt.value = t;
@@ -579,39 +572,41 @@
     if (topics.includes(prevTopic) || prevTopic === "all") els.topicFilter.value = prevTopic;
   }
 
-  function filteredWords() {
-    const level = els.levelFilter.value || "all";
+  // Trả về mảng "study item" (đã chuẩn hóa) khớp bộ lọc hiện tại
+  function filteredItems() {
     const topic = els.topicFilter.value || "all";
-    return ALL_WORDS.filter((w) => {
-      if (level !== "all" && getLevel(w) !== level) return false;
-      if (topic !== "all" && getTopic(w) !== topic) return false;
+
+    if (isGiaoTiep()) {
+      return ALL_GT_SENTENCES
+        .filter((s) => topic === "all" || normStr(s[GT_FIELD.TOPIC]) === topic)
+        .map(gtRowToSentenceItem);
+    }
+
+    const level = els.levelFilter.value || "all";
+    const mode = els.contentTypeFilter.value || "both";
+    const words = ALL_HSK_WORDS.filter((w) => {
+      if (level !== "all" && normStr(w[HSK_FIELD.LEVEL]) !== level) return false;
+      if (topic !== "all" && normStr(w[HSK_FIELD.TOPIC]) !== topic) return false;
       return true;
     });
+    let items = [];
+    if (mode === "vocab" || mode === "both") {
+      items = items.concat(words.map(hskRowToVocabItem));
+    }
+    if (mode === "example" || mode === "both") {
+      items = items.concat(
+        words.filter((w) => (w[HSK_FIELD.EXAMPLE] || "").toString().trim()).map(hskRowToExampleItem)
+      );
+    }
+    return items;
   }
 
   // ================= Flashcard =================
   let deck = [];
   let cardIndex = 0;
 
-  function pickFormat(word, formats) {
-    const valid = formats.filter(([a, b]) => {
-      const va = (word[a] || "").toString().trim();
-      const vb = (word[b] || "").toString().trim();
-      return va && vb;
-    });
-    if (valid.length === 0) return [FIELD.WORD, FIELD.MEANING];
-    return valid[Math.floor(Math.random() * valid.length)];
-  }
-
   function buildFlashcardDeck() {
-    const words = filteredWords();
-    const formats = els.pinyinToggle.checked
-      ? FLASHCARD_FORMATS_BASE.concat(FLASHCARD_FORMATS_PINYIN_EXTRA)
-      : FLASHCARD_FORMATS_BASE;
-    deck = words.map((w) => {
-      const [f, b] = pickFormat(w, formats);
-      return { word: w, front: f, back: b };
-    });
+    deck = filteredItems();
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -635,32 +630,37 @@
   function renderCard() {
     els.flashcard.classList.remove("flipped");
     if (deck.length === 0) {
-      els.frontText.textContent = "Không có từ nào khớp bộ lọc";
+      els.frontText.textContent = "Không có từ/câu nào khớp bộ lọc";
       els.backText.textContent = "";
       els.cardProgressLabel.textContent = "0 / 0";
+      [els.frontPosTag, els.backPosTag, els.frontHanVietLine, els.backPinyinLine].forEach((el) => el.classList.add("hidden"));
+      els.frontIdTag.textContent = "";
+      els.backIdTag.textContent = "";
       return;
     }
-    const c = deck[cardIndex];
-    els.frontTag.textContent = c.front;
-    els.backTag.textContent = c.back;
-    const frontVal = (c.word[c.front] || "").toString();
-    const backVal = (c.word[c.back] || "").toString();
-    els.frontText.textContent = frontVal;
-    els.backText.textContent = backVal;
-    fitText(els.frontText, frontVal, 56);
-    fitText(els.backText, backVal, 24);
+    const item = deck[cardIndex];
 
-    const recordNo = c.word[FIELD.STT];
-    els.frontNoTag.textContent = recordNo ? "No. " + recordNo : "";
-    els.backNoTag.textContent = recordNo ? "No. " + recordNo : "";
-
-    const isExampleCard = EXAMPLE_FIELDS.includes(c.front) || EXAMPLE_FIELDS.includes(c.back);
-    const pos = (c.word[FIELD.POS] || "").toString().trim();
-    const showPos = !isExampleCard && !!pos;
+    // Mặt 1 (trước): nghĩa tiếng Việt + loại từ + Hán Việt (nếu là vocab)
+    els.frontText.textContent = item.meaning || "";
+    fitText(els.frontText, item.meaning || "", 26);
+    const pos = (item.pos || "").toString().trim();
+    const hanViet = (item.hanViet || "").toString().trim();
     els.frontPosTag.textContent = pos;
+    els.frontPosTag.classList.toggle("hidden", !pos);
+    els.frontHanVietLine.textContent = hanViet ? "Hán Việt: " + hanViet : "";
+    els.frontHanVietLine.classList.toggle("hidden", !hanViet);
+
+    // Mặt 2 (sau): chữ Hán + loại từ + pinyin (tùy toggle)
+    els.backText.textContent = item.hanzi || "";
+    fitText(els.backText, item.hanzi || "", 52);
     els.backPosTag.textContent = pos;
-    els.frontPosTag.classList.toggle("hidden", !showPos);
-    els.backPosTag.classList.toggle("hidden", !showPos);
+    els.backPosTag.classList.toggle("hidden", !pos);
+    const showPinyin = els.pinyinToggle.checked && (item.pinyin || "").toString().trim();
+    els.backPinyinLine.textContent = showPinyin ? item.pinyin : "";
+    els.backPinyinLine.classList.toggle("hidden", !showPinyin);
+
+    els.frontIdTag.textContent = item.id ? "ID: " + item.id : "";
+    els.backIdTag.textContent = item.id ? "ID: " + item.id : "";
 
     els.cardProgressLabel.textContent = `Thẻ ${cardIndex + 1} / ${deck.length}`;
   }
@@ -672,13 +672,13 @@
   }
 
   // ================= Quiz =================
-  const QUIZ_TYPES_BASE = ["wordToMeaning", "meaningToWord", "pinyinToBoth", "listenWord"];
+  const QUIZ_TYPES_BASE = ["hanziToMeaning", "meaningToHanzi", "pinyinToBoth", "listenHanzi"];
   let quizQueue = [];
   let quizCorrectCount = 0;
   let quizTotalCount = 0;
-  let missedWords = []; // các từ đã trả lời sai ít nhất 1 lần trong phiên này
-  let syncEnabled = false; // có mật khẩu -> thử ghi điểm lên Sheet
-  let currentQuestion = null; // { word, type }
+  let missedItems = [];
+  let syncEnabled = false;
+  let currentQuestion = null; // { item, type }
 
   function normalizeLoose(str) {
     const cleaned = (str || "")
@@ -710,22 +710,19 @@
       return;
     }
     els.quizStartError.textContent = "";
-    // Hỏi mật khẩu mỗi lần bắt đầu 1 phiên kiểm tra mới. Nhập đúng -> điểm
-    // được ghi lên Sheet; bỏ trống -> vẫn làm bài, tính điểm bình thường,
-    // chỉ là không ghi lên Sheet.
     els.quizPasswordInput.value = APP_PASSWORD || "";
     els.quizPasswordModal.classList.remove("hidden");
     setTimeout(() => els.quizPasswordInput.focus(), 50);
   }
 
   function beginQuizSession() {
-    const pool = filteredWords().filter((w) => masteryNum(w) < MASTERY_MAX);
+    const pool = filteredItems().filter((it) => masteryNum(it.id) < MASTERY_MAX);
     if (pool.length === 0) {
       els.quizStart.classList.add("hidden");
       els.quizSession.classList.add("hidden");
       els.quizDone.classList.remove("hidden");
       els.quizDoneTitle.textContent = "Chủ đề này đã thuộc hết! 🎉";
-      els.quizDoneDesc.textContent = "Tất cả các từ trong chủ đề đã đạt mức thuộc tối đa.";
+      els.quizDoneDesc.textContent = "Tất cả từ/câu trong chủ đề đã đạt mức thuộc tối đa.";
       els.quizDoneMissed.innerHTML = "";
       return;
     }
@@ -736,7 +733,7 @@
     }
     quizCorrectCount = 0;
     quizTotalCount = 0;
-    missedWords = [];
+    missedItems = [];
     els.quizStart.classList.add("hidden");
     els.quizDone.classList.add("hidden");
     els.quizSession.classList.remove("hidden");
@@ -751,30 +748,27 @@
       els.quizDoneTitle.textContent = "Hoàn thành phiên kiểm tra! 🎉";
       els.quizDoneDesc.textContent = `Bạn đã trả lời đúng ${quizCorrectCount}/${quizTotalCount} lượt trong chủ đề này.` +
         (syncEnabled ? "" : " (Chưa lưu lên Sheet vì không nhập mật khẩu.)");
-      if (missedWords.length === 0) {
+      if (missedItems.length === 0) {
         els.quizDoneMissed.innerHTML = "";
       } else {
-        const items = missedWords.map((w) =>
-          `<li><span class="hz">${w[FIELD.WORD]}</span><span class="mn">${w[FIELD.PINYIN]} — ${w[FIELD.MEANING]}</span></li>`
+        const items = missedItems.map((it) =>
+          `<li><span class="hz">${it.hanzi}</span><span class="mn">${it.pinyin ? it.pinyin + " — " : ""}${it.meaning}</span></li>`
         ).join("");
         els.quizDoneMissed.innerHTML = `
-          <p class="missed-title">Các từ đã trả lời sai (nên ôn lại):</p>
+          <p class="missed-title">Các từ/câu đã trả lời sai (nên ôn lại):</p>
           <ul class="missed-list">${items}</ul>`;
       }
       return;
     }
-    const word = quizQueue[0];
+    const item = quizQueue[0];
     const types = QUIZ_TYPES_BASE.slice();
-    if ((word[FIELD.EXAMPLE] || "").toString().trim()) types.push("listenExample");
-    if (els.hanVietToggle.checked && (word[FIELD.HAN_VIET] || "").toString().trim()) types.push("hanVietToBoth");
+    if (els.hanVietToggle.checked && (item.hanViet || "").toString().trim()) types.push("hanVietToBoth");
     const type = types[Math.floor(Math.random() * types.length)];
-    currentQuestion = { word, type };
+    currentQuestion = { item, type };
     renderQuestion();
   }
 
-  // Dùng chung cho các câu hỏi "đưa 1 cách đọc (pinyin/Hán Việt) -> gõ lại
-  // TỪ VỰNG + NGHĨA". Chỉ khác nhau ở giá trị hiển thị trên prompt.
-  function renderRecallBothQuestion(word, handwrite, promptValue) {
+  function renderRecallBothQuestion(item, handwrite, promptValue) {
     els.quizPromptText.textContent = promptValue;
     fitText(els.quizPromptText, promptValue, 40);
     const meaningInputHtml = `
@@ -782,30 +776,30 @@
       <input type="text" id="ansMeaning2" class="text-input" autocomplete="off">`;
     if (handwrite && HANZI_WRITER_READY) {
       currentQuestion.hanziAutoMode = true;
-      const chars = charsOf(word[FIELD.WORD]);
+      const chars = charsOf(item.hanzi);
       els.quizAnswers.innerHTML = renderHanziQuizHtml(chars) + meaningInputHtml;
       mountHanziQuiz(els.quizAnswers, chars, {
         onComplete: () => {
           currentQuestion.hanziAllCorrect = true;
           showToast("Đã viết đúng chữ Hán — giờ gõ nghĩa rồi bấm Kiểm tra.");
         },
-        onSkip: () => finalizeAnswer(word, false, `Từ đúng: ${word[FIELD.WORD]} — Nghĩa đúng: ${word[FIELD.MEANING]}`),
+        onSkip: () => finalizeAnswer(item, false, `Từ/câu đúng: ${item.hanzi} — Nghĩa đúng: ${item.meaning}`),
         onLoadError: () => {
           currentQuestion.hanziAutoMode = false;
           els.quizAnswers.innerHTML = `
-            <label for="ansWord2">Gõ lại TỪ VỰNG (chữ Hán)</label>
+            <label for="ansWord2">Gõ lại (chữ Hán)</label>
             <input type="text" id="ansWord2" class="text-input" autocomplete="off">` + meaningInputHtml;
         },
       });
     } else {
       els.quizAnswers.innerHTML = `
-        <label for="ansWord2">Gõ lại TỪ VỰNG (chữ Hán)</label>
+        <label for="ansWord2">Gõ lại (chữ Hán)</label>
         <input type="text" id="ansWord2" class="text-input" autocomplete="off">` + meaningInputHtml;
     }
   }
 
   function renderQuestion() {
-    const { word, type } = currentQuestion;
+    const { item, type } = currentQuestion;
     els.quizAnswers.innerHTML = "";
     els.quizSpeakBtn.classList.add("hidden");
     els.quizPromptText.classList.remove("hidden");
@@ -821,22 +815,22 @@
 
     const handwrite = els.handwriteToggle.checked;
 
-    if (type === "wordToMeaning") {
-      els.quizPromptTag.textContent = FIELD.WORD;
-      els.quizPromptText.textContent = word[FIELD.WORD];
-      fitText(els.quizPromptText, word[FIELD.WORD], 56);
+    if (type === "hanziToMeaning") {
+      els.quizPromptTag.textContent = "CHỮ / CÂU";
+      els.quizPromptText.textContent = item.hanzi;
+      fitText(els.quizPromptText, item.hanzi, 48);
       els.quizAnswers.innerHTML = `
         <label for="ansMeaning">Gõ lại NGHĨA</label>
         <input type="text" id="ansMeaning" class="text-input" autocomplete="off">`;
-    } else if (type === "meaningToWord") {
-      els.quizPromptTag.textContent = FIELD.MEANING;
-      els.quizPromptText.textContent = word[FIELD.MEANING];
-      fitText(els.quizPromptText, word[FIELD.MEANING], 40);
+    } else if (type === "meaningToHanzi") {
+      els.quizPromptTag.textContent = "NGHĨA";
+      els.quizPromptText.textContent = item.meaning;
+      fitText(els.quizPromptText, item.meaning, 32);
       if (handwrite) {
         els.submitAnswerBtn.classList.add("hidden");
-        setupHandwritingAnswer(els.quizAnswers, word[FIELD.WORD], {
-          onComplete: () => finalizeAnswer(word, true, ""),
-          onSkip: () => finalizeAnswer(word, false, `Từ đúng: ${word[FIELD.WORD]} (${word[FIELD.PINYIN]})`),
+        setupHandwritingAnswer(els.quizAnswers, item.hanzi, {
+          onComplete: () => finalizeAnswer(item, true, ""),
+          onSkip: () => finalizeAnswer(item, false, `Đúng: ${item.hanzi}${item.pinyin ? " (" + item.pinyin + ")" : ""}`),
           onFallbackCanvas: (isSufficient) => {
             currentQuestion.needsSelfGrade = true;
             currentQuestion.checkHandwriteSufficient = isSufficient;
@@ -846,25 +840,25 @@
         });
       } else {
         els.quizAnswers.innerHTML = `
-          <label for="ansWord">Gõ lại TỪ VỰNG (chữ Hán)</label>
+          <label for="ansWord">Gõ lại (chữ Hán)</label>
           <input type="text" id="ansWord" class="text-input" autocomplete="off">`;
       }
     } else if (type === "pinyinToBoth") {
-      els.quizPromptTag.textContent = FIELD.PINYIN;
-      renderRecallBothQuestion(word, handwrite, word[FIELD.PINYIN]);
+      els.quizPromptTag.textContent = "PINYIN";
+      renderRecallBothQuestion(item, handwrite, item.pinyin);
     } else if (type === "hanVietToBoth") {
-      els.quizPromptTag.textContent = FIELD.HAN_VIET;
-      renderRecallBothQuestion(word, handwrite, word[FIELD.HAN_VIET]);
-    } else if (type === "listenWord") {
-      els.quizPromptTag.textContent = "NGHE TỪ";
+      els.quizPromptTag.textContent = "HÁN VIỆT";
+      renderRecallBothQuestion(item, handwrite, item.hanViet);
+    } else if (type === "listenHanzi") {
+      els.quizPromptTag.textContent = "NGHE";
       els.quizPromptText.textContent = "🔊";
       els.quizPromptText.style.fontSize = (isTabletScreen() ? 64 : 48) + "px";
       els.quizSpeakBtn.classList.remove("hidden");
       if (handwrite) {
         els.submitAnswerBtn.classList.add("hidden");
-        setupHandwritingAnswer(els.quizAnswers, word[FIELD.WORD], {
-          onComplete: () => finalizeAnswer(word, true, ""),
-          onSkip: () => finalizeAnswer(word, false, `Từ đúng: ${word[FIELD.WORD]} (${word[FIELD.PINYIN]}) — ${word[FIELD.MEANING]}`),
+        setupHandwritingAnswer(els.quizAnswers, item.hanzi, {
+          onComplete: () => finalizeAnswer(item, true, ""),
+          onSkip: () => finalizeAnswer(item, false, `Đúng: ${item.hanzi}${item.pinyin ? " (" + item.pinyin + ")" : ""} — ${item.meaning}`),
           onFallbackCanvas: (isSufficient) => {
             currentQuestion.needsSelfGrade = true;
             currentQuestion.checkHandwriteSufficient = isSufficient;
@@ -874,60 +868,31 @@
         });
       } else {
         els.quizAnswers.innerHTML = `
-          <label for="ansListenWord">Gõ lại từ bạn vừa nghe (chữ Hán)</label>
-          <input type="text" id="ansListenWord" class="text-input" autocomplete="off">`;
+          <label for="ansListen">Gõ lại những gì bạn vừa nghe (chữ Hán)</label>
+          <input type="text" id="ansListen" class="text-input" autocomplete="off">`;
       }
-      speak(word[FIELD.WORD]);
-    } else if (type === "listenExample") {
-      els.quizPromptTag.textContent = "NGHE CÂU";
-      els.quizPromptText.textContent = "🔊";
-      els.quizPromptText.style.fontSize = (isTabletScreen() ? 64 : 48) + "px";
-      els.quizSpeakBtn.classList.remove("hidden");
-      if (handwrite) {
-        els.submitAnswerBtn.classList.add("hidden");
-        setupHandwritingAnswer(els.quizAnswers, word[FIELD.EXAMPLE], {
-          onComplete: () => finalizeAnswer(word, true, ""),
-          onSkip: () => finalizeAnswer(word, false, `Câu đúng: ${word[FIELD.EXAMPLE]} (${word[FIELD.EXAMPLE_PINYIN]}) — ${word[FIELD.EXAMPLE_MEANING]}`),
-          onFallbackCanvas: (isSufficient) => {
-            currentQuestion.needsSelfGrade = true;
-            currentQuestion.checkHandwriteSufficient = isSufficient;
-            els.submitAnswerBtn.textContent = "Xem đáp án";
-            els.submitAnswerBtn.classList.remove("hidden");
-          },
-        });
-      } else {
-        els.quizAnswers.innerHTML = `
-          <label for="ansListenExample">Gõ lại câu bạn vừa nghe (chữ Hán)</label>
-          <input type="text" id="ansListenExample" class="text-input" autocomplete="off">`;
-      }
-      speak(word[FIELD.EXAMPLE]);
+      speak(item.hanzi);
     }
     els.quizProgressLabel.textContent = `Còn lại: ${quizQueue.length} · Đúng: ${quizCorrectCount}/${quizTotalCount}`;
     const firstInput = els.quizAnswers.querySelector("input");
     if (firstInput) setTimeout(() => firstInput.focus(), 50);
   }
 
-  // Hiện đáp án đúng + 2 nút tự chấm, dùng cho các câu hỏi bật chế độ viết tay
   function revealSelfGrade() {
-    const { word, type, checkHandwriteSufficient } = currentQuestion;
-
+    const { item, type, checkHandwriteSufficient } = currentQuestion;
     if (checkHandwriteSufficient && !checkHandwriteSufficient()) {
       showToast("Hãy viết đủ nét hơn trước khi xem đáp án (xem số nét đã đếm dưới bảng vẽ).");
       return;
     }
-
     let answerText = "";
     let pendingMeaningOk = null;
 
-    if (type === "meaningToWord" || type === "listenWord") {
-      answerText = `${word[FIELD.WORD]} (${word[FIELD.PINYIN]}) — ${word[FIELD.MEANING]}`;
+    if (type === "meaningToHanzi" || type === "listenHanzi") {
+      answerText = `${item.hanzi}${item.pinyin ? " (" + item.pinyin + ")" : ""} — ${item.meaning}`;
     } else if (type === "pinyinToBoth" || type === "hanVietToBoth") {
       const valMeaning = $("ansMeaning2") ? $("ansMeaning2").value : "";
-      pendingMeaningOk = meaningMatches(valMeaning, word[FIELD.MEANING]);
-      answerText = `${word[FIELD.WORD]} — ${word[FIELD.MEANING]}` +
-        (pendingMeaningOk ? "" : " (phần nghĩa bạn gõ chưa đúng)");
-    } else if (type === "listenExample") {
-      answerText = `${word[FIELD.EXAMPLE]} (${word[FIELD.EXAMPLE_PINYIN]}) — ${word[FIELD.EXAMPLE_MEANING]}`;
+      pendingMeaningOk = meaningMatches(valMeaning, item.meaning);
+      answerText = `${item.hanzi} — ${item.meaning}` + (pendingMeaningOk ? "" : " (phần nghĩa bạn gõ chưa đúng)");
     }
 
     currentQuestion.revealed = true;
@@ -939,12 +904,12 @@
   }
 
   function finalizeSelfGrade(selfOk) {
-    const { word, pendingMeaningOk } = currentQuestion;
+    const { item, pendingMeaningOk } = currentQuestion;
     const overallCorrect = selfOk && (pendingMeaningOk === null || pendingMeaningOk === undefined ? true : pendingMeaningOk);
     const summary = els.selfGradeAnswer.textContent;
     els.selfGradePanel.classList.add("hidden");
     els.submitAnswerBtn.classList.remove("hidden");
-    finalizeAnswer(word, overallCorrect, summary);
+    finalizeAnswer(item, overallCorrect, summary);
   }
 
   function handleSubmitClick() {
@@ -958,21 +923,21 @@
 
   async function submitAnswer() {
     if (!currentQuestion) return;
-    const { word, type } = currentQuestion;
+    const { item, type } = currentQuestion;
     let correct = false;
     let correctSummary = "";
 
-    if (type === "wordToMeaning") {
+    if (type === "hanziToMeaning") {
       const val = $("ansMeaning") ? $("ansMeaning").value : "";
-      correct = meaningMatches(val, word[FIELD.MEANING]);
-      correctSummary = `Nghĩa đúng: ${word[FIELD.MEANING]}`;
-    } else if (type === "meaningToWord") {
+      correct = meaningMatches(val, item.meaning);
+      correctSummary = `Nghĩa đúng: ${item.meaning}`;
+    } else if (type === "meaningToHanzi") {
       const val = $("ansWord") ? $("ansWord").value : "";
-      correct = wordMatches(val, word[FIELD.WORD]);
-      correctSummary = `Từ đúng: ${word[FIELD.WORD]} (${word[FIELD.PINYIN]})`;
+      correct = wordMatches(val, item.hanzi);
+      correctSummary = `Đúng: ${item.hanzi}${item.pinyin ? " (" + item.pinyin + ")" : ""}`;
     } else if (type === "pinyinToBoth" || type === "hanVietToBoth") {
       const valMeaning = $("ansMeaning2") ? $("ansMeaning2").value : "";
-      const mOk = meaningMatches(valMeaning, word[FIELD.MEANING]);
+      const mOk = meaningMatches(valMeaning, item.meaning);
       let wOk;
       let wordNote = "";
       if (currentQuestion.hanziAutoMode) {
@@ -980,29 +945,22 @@
         wordNote = wOk ? "" : " (bạn chưa viết xong/đúng chữ Hán)";
       } else {
         const valWord = $("ansWord2") ? $("ansWord2").value : "";
-        wOk = wordMatches(valWord, word[FIELD.WORD]);
+        wOk = wordMatches(valWord, item.hanzi);
         wordNote = wOk ? "" : " (bạn gõ sai chữ Hán)";
       }
       correct = wOk && mOk;
-      correctSummary = `Từ đúng: ${word[FIELD.WORD]} — Nghĩa đúng: ${word[FIELD.MEANING]}` +
+      correctSummary = `Đúng: ${item.hanzi} — Nghĩa đúng: ${item.meaning}` +
         wordNote + (!mOk ? " (bạn gõ sai nghĩa)" : "");
-    } else if (type === "listenWord") {
-      const val = $("ansListenWord") ? $("ansListenWord").value : "";
-      correct = wordMatches(val, word[FIELD.WORD]);
-      correctSummary = `Từ đúng: ${word[FIELD.WORD]} (${word[FIELD.PINYIN]}) — ${word[FIELD.MEANING]}`;
-    } else if (type === "listenExample") {
-      const val = $("ansListenExample") ? $("ansListenExample").value : "";
-      correct = wordMatches(val, word[FIELD.EXAMPLE]);
-      correctSummary = `Câu đúng: ${word[FIELD.EXAMPLE]} (${word[FIELD.EXAMPLE_PINYIN]}) — ${word[FIELD.EXAMPLE_MEANING]}`;
+    } else if (type === "listenHanzi") {
+      const val = $("ansListen") ? $("ansListen").value : "";
+      correct = wordMatches(val, item.hanzi);
+      correctSummary = `Đúng: ${item.hanzi}${item.pinyin ? " (" + item.pinyin + ")" : ""} — ${item.meaning}`;
     }
 
-    await finalizeAnswer(word, correct, correctSummary);
+    await finalizeAnswer(item, correct, correctSummary);
   }
 
-  // Phần đuôi dùng chung: cập nhật đếm số, ghi lên Sheet nếu đúng, xếp lại
-  // hàng đợi nếu sai, và hiển thị phản hồi. Dùng cho cả 2 đường: gõ chữ (tự
-  // động chấm) và viết tay (người dùng tự chấm).
-  async function finalizeAnswer(word, correct, correctSummary) {
+  async function finalizeAnswer(item, correct, correctSummary) {
     quizTotalCount++;
     quizQueue.shift();
 
@@ -1013,8 +971,8 @@
       els.feedbackCorrect.textContent = "";
       if (syncEnabled) {
         try {
-          const res = await apiPost({ action: "incrementMastery", row: word._row });
-          word[FIELD.MASTERY] = res.newValue;
+          const res = await apiPost({ action: "incrementMastery", id: item.id });
+          PROGRESS_MAP[item.id] = res.newValue;
         } catch (err) {
           if (err.authError) {
             showToast("Sai mật khẩu — điểm chỉ tính tạm trên máy, chưa ghi lên Sheet.");
@@ -1024,8 +982,8 @@
         }
       }
     } else {
-      quizQueue.push(word); // hỏi lại sau trong cùng phiên
-      if (!missedWords.some((w) => w._row === word._row)) missedWords.push(word);
+      quizQueue.push(item);
+      if (!missedItems.some((it) => it.id === item.id && it.kind === item.kind)) missedItems.push(item);
       els.feedbackVerdict.textContent = "✗ Chưa đúng";
       els.feedbackVerdict.className = "feedback-verdict incorrect";
       els.feedbackCorrect.textContent = correctSummary;
@@ -1055,13 +1013,13 @@
   });
 
   if (HARDCODED_API_URL) {
-    els.settingsBtn.classList.add("hidden"); // URL đã cố định, không còn gì để chỉnh qua đây nữa
+    els.settingsBtn.classList.add("hidden");
   } else {
     els.settingsBtn.addEventListener("click", () => {
       els.apiUrlInput.classList.remove("hidden");
       els.apiUrlInput.value = API_URL;
       els.setupTitle.textContent = "Cài đặt kết nối";
-      els.setupDesc.textContent = "Dán URL Apps Script Web App bạn đã deploy từ Sheet \"HSK\" vào đây. Xem hướng dẫn trong file backend-apps-script.gs.txt đi kèm.";
+      els.setupDesc.textContent = "Dán URL Apps Script Web App bạn đã deploy vào đây. Xem hướng dẫn trong file backend-apps-script.gs.txt đi kèm.";
       els.setupError.textContent = "";
       els.setupModal.classList.remove("hidden");
     });
@@ -1070,11 +1028,14 @@
   els.refreshBtn.addEventListener("click", () => loadData(true));
 
   els.levelFilter.addEventListener("change", () => {
+    syncContentTypeDisabled();
     populateTopics();
     buildFlashcardDeck();
   });
   els.topicFilter.addEventListener("change", buildFlashcardDeck);
-  els.pinyinToggle.addEventListener("change", buildFlashcardDeck);
+  els.contentTypeFilter.addEventListener("change", buildFlashcardDeck);
+  els.pinyinToggle.addEventListener("change", renderCard);
+
   const HAN_VIET_TOGGLE_KEY = "hsk-app-hanviet-toggle";
   els.hanVietToggle.checked = localStorage.getItem(HAN_VIET_TOGGLE_KEY) === "1";
   els.hanVietToggle.addEventListener("change", () => {
@@ -1099,7 +1060,7 @@
 
   els.shuffleBtn.addEventListener("click", () => {
     buildFlashcardDeck();
-    showToast("Đã xáo trộn & đổi kiểu thẻ");
+    showToast("Đã xáo trộn bộ thẻ");
   });
   els.flashcard.addEventListener("click", () => {
     els.flashcard.classList.toggle("flipped");
@@ -1107,14 +1068,12 @@
   els.speakFrontBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (deck.length === 0) return;
-    const c = deck[cardIndex];
-    speak(audioTextForField(c.word, c.front));
+    speak(deck[cardIndex].hanzi);
   });
   els.speakBackBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (deck.length === 0) return;
-    const c = deck[cardIndex];
-    speak(audioTextForField(c.word, c.back));
+    speak(deck[cardIndex].hanzi);
   });
   els.prevBtn.addEventListener("click", () => goToCard(cardIndex - 1));
   els.nextBtn.addEventListener("click", () => goToCard(cardIndex + 1));
@@ -1141,11 +1100,10 @@
     els.quizPasswordModal.classList.add("hidden");
     beginQuizSession();
   });
+
   els.quizSpeakBtn.addEventListener("click", () => {
     if (!currentQuestion) return;
-    const { word, type } = currentQuestion;
-    if (type === "listenWord") speak(word[FIELD.WORD]);
-    else if (type === "listenExample") speak(word[FIELD.EXAMPLE]);
+    speak(currentQuestion.item.hanzi);
   });
   els.submitAnswerBtn.addEventListener("click", handleSubmitClick);
   els.selfCorrectBtn.addEventListener("click", () => finalizeSelfGrade(true));
@@ -1164,7 +1122,7 @@
     if (API_URL) {
       els.setupModal.classList.add("hidden");
       els.app.classList.remove("hidden");
-      await loadData(false); // nếu sai/thiếu mật khẩu, loadData tự mở lại modal
+      await loadData(false);
     } else {
       els.apiUrlInput.classList.remove("hidden");
       els.setupModal.classList.remove("hidden");

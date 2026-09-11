@@ -1,46 +1,40 @@
 /**
- * ===== CÁCH TRIỂN KHAI (chỉ làm 1 lần) =====
- * 1. Mở Google Sheet "HSK" (sheetID: 183NqZLUSQvN81Vuni4sBLKy1f7g4VVFSWYToYuH5rhc)
- * 2. Tiện ích mở rộng > Apps Script
- * 3. Xóa code mẫu, dán TOÀN BỘ nội dung file này vào
- * 4. Lưu (Ctrl+S)
- * 5. Bấm nút "Deploy" (Triển khai) > "New deployment" (Triển khai mới)
- *    - Chọn loại: "Web app"
- *    - Description: tùy ý, vd "HSK PWA API"
- *    - Execute as: Me (tài khoản của bạn)
- *    - Who has access: Anyone (bắt buộc chọn "Anyone" để app gọi được,
- *      vì có lớp mật khẩu ở dưới bảo vệ rồi nên vẫn an toàn)
- * 6. Bấm Deploy > Authorize access > chọn tài khoản Google > Advanced >
- *    "Go to ... (unsafe)" > Allow (vì đây là script tự viết, Google sẽ cảnh báo mặc định)
- * 7. Copy URL dạng: https://script.google.com/macros/s/XXXXXXXX/exec
- * 8. Dán URL đó vào app.js (biến API_URL) — chỉ cần làm 1 lần, không cần lặp lại
- *    kể cả khi xóa cache trình duyệt.
- * 9. (Tùy chọn nhưng khuyến khích) Tạo thêm 1 sheet tên đúng là "CONFIG" trong
- *    cùng file Google Sheet này, gõ 1 mật khẩu bất kỳ vào ô A1. Mật khẩu này
- *    CHỈ áp dụng cho việc GHI điểm (cột OK) — ai cũng đọc/làm bài được bình
- *    thường không cần mật khẩu, nhưng nếu gõ sai hoặc không nhập mật khẩu,
- *    kết quả kiểm tra vẫn tính điểm bình thường trên máy, chỉ là KHÔNG được
- *    ghi lên Sheet. Để trống ô A1 (hoặc không tạo sheet CONFIG) = ai cũng
- *    ghi được, không cần mật khẩu.
+ * ===== CÁCH TRIỂN KHAI =====
+ * 1. Mở Google Sheet, vào Tiện ích mở rộng > Apps Script
+ * 2. Xóa code cũ, dán TOÀN BỘ nội dung file này vào
+ * 3. Lưu (Ctrl+S)
+ * 4. Deploy > Manage deployments > sửa deployment cũ > New version > Deploy
+ *    (nếu đây là lần đầu deploy thì làm New deployment > Web app > Execute as: Me
+ *    > Who has access: Anyone > Deploy > Authorize)
+ * 5. URL giữ nguyên như cũ, không cần sửa gì trong app.js
  *
- * Lưu ý: Nếu sau này bạn sửa lại code này, phải bấm Deploy > Manage deployments
- * > sửa deployment cũ > New version, thì URL mới áp dụng thay đổi (URL giữ nguyên).
- * Đổi mật khẩu bất cứ lúc nào chỉ cần sửa ô CONFIG!A1, không cần deploy lại.
+ * ===== CẦN CÓ 3 SHEET SAU (đúng tên) =====
+ * - "HSK": VOCAB_ID, VOCAB, PINYIN, PART-OF-SPEECH, MEANING, EXAMPLE,
+ *          EXAMPLE PINYIN, EXAMPLE MEANING, LEVEL, HAN-VIET, TOPIC
+ * - "GIAO TIẾP": SENT_ID, CHN, PINYIN, VIE, TOPIC
+ * - "PROGRESS": ID, OK  (app tự thêm dòng mới / tự tăng số khi làm đúng)
+ * - "CONFIG" (tùy chọn): ô A1 = mật khẩu ghi điểm, để trống = không cần mật khẩu
  */
 
 var SPREADSHEET_ID = '183NqZLUSQvN81Vuni4sBLKy1f7g4VVFSWYToYuH5rhc';
-var SHEET_NAME = 'HSK';
-var CONFIG_SHEET_NAME = 'CONFIG'; // ô A1 của sheet này = mật khẩu dùng chung
-// Chấp nhận cả tên cột tiếng Anh lẫn tiếng Việt cũ - phòng khi đổi tên cột sau này
-var MASTERY_COL_ALIASES = ['OK', 'THUỘC RỒI'];
+var HSK_SHEET_NAME = 'HSK';
+var GIAOTIEP_SHEET_NAME = 'GIAO TIẾP';
+var PROGRESS_SHEET_NAME = 'PROGRESS';
+var CONFIG_SHEET_NAME = 'CONFIG';
 var MASTERY_MAX = 5;
 
-// Đọc mật khẩu từ sheet CONFIG!A1. Nếu chưa tạo sheet CONFIG, hoặc ô A1 để
-// trống, coi như chưa bật bảo vệ -> không chặn ai (để không tự khóa mình
-// khi chưa kịp thiết lập).
+function _ss() {
+  return SpreadsheetApp.openById(SPREADSHEET_ID);
+}
+
+function _json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function _checkPassword(pw) {
   try {
-    var cfg = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(CONFIG_SHEET_NAME);
+    var cfg = _ss().getSheetByName(CONFIG_SHEET_NAME);
     if (!cfg) return true;
     var expected = cfg.getRange('A1').getValue();
     expected = (expected === null || expected === undefined) ? '' : String(expected).trim();
@@ -51,54 +45,62 @@ function _checkPassword(pw) {
   }
 }
 
-function _stripDiacritics(s) {
-  return (s || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd');
-}
-function _keyNorm(s) {
-  return _stripDiacritics(s).toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-function _findMasteryCol(headers) {
-  for (var i = 0; i < headers.length; i++) {
-    var norm = _keyNorm(headers[i]);
-    for (var j = 0; j < MASTERY_COL_ALIASES.length; j++) {
-      if (norm === _keyNorm(MASTERY_COL_ALIASES[j])) return i + 1; // 1-based column
-    }
+// Đọc 1 sheet dạng bảng (dòng 1 = header) thành mảng object {header: value}
+function _sheetToRows(sheet) {
+  if (!sheet) return { headers: [], rows: [] };
+  var values = sheet.getDataRange().getValues();
+  if (values.length === 0) return { headers: [], rows: [] };
+  var headers = values[0];
+  var rows = [];
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    if (row.join('') === '') continue;
+    var obj = {};
+    headers.forEach(function (h, idx) { obj[h] = row[idx]; });
+    obj._row = i + 1;
+    rows.push(obj);
   }
-  return 0;
+  return { headers: headers, rows: rows };
 }
 
-function _getSheet() {
-  return SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
+// Đọc sheet PROGRESS thành map ID -> OK (số)
+function _getProgressMap() {
+  var sheet = _ss().getSheetByName(PROGRESS_SHEET_NAME);
+  var map = {};
+  if (!sheet) return map;
+  var values = sheet.getDataRange().getValues();
+  for (var i = 1; i < values.length; i++) {
+    var id = values[i][0];
+    if (id === '' || id === null || id === undefined) continue;
+    var ok = values[i][1];
+    var okNum = (ok === '' || ok === null || isNaN(ok)) ? 0 : Number(ok);
+    map[String(id).trim()] = okNum;
+  }
+  return map;
 }
 
-function _json(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-// Lấy toàn bộ dữ liệu sheet dạng JSON — KHÔNG cần mật khẩu, để ai cũng làm
-// bài được (chỉ phần GHI điểm ở doPost mới cần đúng mật khẩu).
 function doGet(e) {
   try {
-    var sheet = _getSheet();
-    var values = sheet.getDataRange().getValues();
-    var headers = values[0];
-    var rows = [];
-    for (var i = 1; i < values.length; i++) {
-      var row = values[i];
-      if (row.join('') === '') continue; // bỏ dòng trống
-      var obj = {};
-      headers.forEach(function (h, idx) { obj[h] = row[idx]; });
-      obj._row = i + 1; // số dòng thật trong sheet (1-based)
-      rows.push(obj);
-    }
-    return _json({ ok: true, headers: headers, rows: rows, masteryMax: MASTERY_MAX });
+    var ss = _ss();
+    var hsk = _sheetToRows(ss.getSheetByName(HSK_SHEET_NAME));
+    var giaoTiep = _sheetToRows(ss.getSheetByName(GIAOTIEP_SHEET_NAME));
+    var progress = _getProgressMap();
+    return _json({
+      ok: true,
+      hskHeaders: hsk.headers,
+      hskRows: hsk.rows,
+      giaoTiepHeaders: giaoTiep.headers,
+      giaoTiepRows: giaoTiep.rows,
+      progress: progress,
+      masteryMax: MASTERY_MAX,
+    });
   } catch (err) {
     return _json({ ok: false, error: String(err) });
   }
 }
 
-// Cập nhật cột THUỘC RỒI khi trả lời đúng
+// Tăng điểm OK trong sheet PROGRESS theo ID (VOCAB_ID hoặc SENT_ID).
+// Chưa có dòng nào ứng với ID đó thì tự thêm dòng mới (OK=1).
 function doPost(e) {
   try {
     var body = JSON.parse(e.postData.contents);
@@ -106,20 +108,30 @@ function doPost(e) {
       return _json({ ok: false, authError: true, error: 'Sai mật khẩu' });
     }
     var action = body.action;
-    var sheet = _getSheet();
-    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    var masteryCol = _findMasteryCol(headers);
-    if (masteryCol === 0) throw new Error('Không tìm thấy cột điểm thuộc (OK / THUỘC RỒI)');
 
     if (action === 'incrementMastery') {
-      var row = Number(body.row);
-      if (!row || row < 2) throw new Error('Số dòng không hợp lệ');
-      var cell = sheet.getRange(row, masteryCol);
-      var cur = cell.getValue();
-      var curNum = (cur === '' || cur === null || isNaN(cur)) ? 0 : Number(cur);
-      var newVal = curNum + 1;
-      cell.setValue(newVal);
-      return _json({ ok: true, row: row, newValue: newVal });
+      var id = String(body.id || '').trim();
+      if (!id) throw new Error('Thiếu ID');
+      var sheet = _ss().getSheetByName(PROGRESS_SHEET_NAME);
+      if (!sheet) throw new Error('Không tìm thấy sheet PROGRESS');
+
+      var values = sheet.getDataRange().getValues();
+      var foundRow = -1;
+      for (var i = 1; i < values.length; i++) {
+        if (String(values[i][0]).trim() === id) { foundRow = i + 1; break; }
+      }
+
+      var newVal;
+      if (foundRow === -1) {
+        newVal = 1;
+        sheet.appendRow([id, newVal]);
+      } else {
+        var cur = values[foundRow - 1][1];
+        var curNum = (cur === '' || cur === null || isNaN(cur)) ? 0 : Number(cur);
+        newVal = curNum + 1;
+        sheet.getRange(foundRow, 2).setValue(newVal);
+      }
+      return _json({ ok: true, id: id, newValue: newVal });
     }
 
     return _json({ ok: false, error: 'Hành động không xác định: ' + action });

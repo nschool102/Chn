@@ -118,19 +118,19 @@ input, select { font-family: inherit; }
 .card-face {
   position: absolute; inset: 0; border-radius: var(--radius); backface-visibility: hidden;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 24px; border: 1px solid var(--line); background: var(--paper);
+  padding: 24px 24px 40px; border: 1px solid var(--line); background: var(--paper);
   box-shadow: 0 10px 30px rgba(43,38,34,0.08); text-align: center;
 }
 .card-back { transform: rotateY(180deg); background: var(--paper-deep); }
 
-.format-tag {
+.side-tag {
   position: absolute; top: 16px; left: 16px; font-size: 11px; font-weight: 700;
   color: var(--jade-deep); background: rgba(78,107,88,0.12); padding: 5px 10px;
-  border-radius: 999px; letter-spacing: 0.02em;
+  border-radius: 999px; letter-spacing: 0.04em;
 }
 
-.record-no-tag {
-  position: absolute; top: 44px; left: 18px; font-size: 10px; font-weight: 600;
+.record-id-tag {
+  position: absolute; bottom: 14px; left: 18px; font-size: 10px; font-weight: 600;
   color: var(--ink-soft); letter-spacing: 0.02em;
 }
 
@@ -138,6 +138,10 @@ input, select { font-family: inherit; }
   margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--gold);
   background: rgba(201,162,39,0.14); padding: 4px 12px; border-radius: 999px;
   display: inline-block;
+}
+
+.hanviet-line, .pinyin-line {
+  margin: 8px 0 0; font-size: 14px; color: var(--seal-deep); font-weight: 600;
 }
 
 .stamp {
@@ -154,6 +158,14 @@ input, select { font-family: inherit; }
 }
 .hanzi-small {
   font-family: var(--font-ui); font-weight: 600; font-size: 24px; line-height: 1.4;
+  color: var(--ink); max-width: 100%;
+}
+.card-main-hanzi {
+  font-family: var(--font-display); font-weight: 700; font-size: 52px; line-height: 1.25;
+  color: var(--ink); max-width: 100%; word-break: break-word;
+}
+.card-main-meaning {
+  font-family: var(--font-ui); font-weight: 600; font-size: 26px; line-height: 1.4;
   color: var(--ink); max-width: 100%;
 }
 .tap-hint { margin-top: 18px; font-size: 13px; color: var(--ink-soft); }
@@ -300,10 +312,12 @@ input, select { font-family: inherit; }
   .pinyin-toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(20px); }
 
   .card { height: 460px; }
-  .format-tag { font-size: 12px; padding: 6px 13px; top: 20px; left: 20px; }
+  .side-tag { font-size: 12px; padding: 6px 13px; top: 20px; left: 20px; }
+  .record-id-tag { font-size: 11px; bottom: 18px; left: 22px; }
   .stamp { width: 46px; height: 46px; top: 16px; right: 16px; }
   .tap-hint { font-size: 14px; margin-top: 22px; }
-  .hanzi-small { font-size: 28px; }
+  .card-main-meaning { font-size: 30px; }
+  .hanviet-line, .pinyin-line { font-size: 16px; }
 
   .primary-btn, .ctrl-btn { padding: 17px 0; font-size: 16px; border-radius: 16px; }
   .progress-label { font-size: 13px; }

@@ -64,8 +64,19 @@
   </header>
 
   <div class="filter-row">
-    <select id="levelFilter" class="chip-select"></select>
+    <select id="levelFilter" class="chip-select">
+      <option value="giaotiep" selected>🗣️ Giao tiếp</option>
+      <option value="all">Tất cả cấp độ (HSK)</option>
+    </select>
     <select id="topicFilter" class="chip-select"></select>
+  </div>
+
+  <div class="filter-row">
+    <select id="contentTypeFilter" class="chip-select">
+      <option value="vocab">Chỉ Từ vựng</option>
+      <option value="example">Chỉ Ví dụ</option>
+      <option value="both" selected>Từ vựng + Ví dụ</option>
+    </select>
   </div>
 
   <label class="pinyin-toggle">
@@ -110,23 +121,25 @@
     <div class="deck" id="deck">
       <div class="card" id="flashcard">
         <div class="card-face card-front">
-          <span class="format-tag" id="frontTag">TỪ VỰNG</span>
-          <span class="record-no-tag" id="frontNoTag"></span>
+          <span class="side-tag">NGHĨA</span>
           <button class="stamp" id="speakFrontBtn" aria-label="Phát âm">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
           </button>
-          <div class="hanzi-display" id="frontText">…</div>
+          <div class="card-main-meaning" id="frontText">…</div>
           <span class="pos-tag hidden" id="frontPosTag"></span>
+          <p class="hanviet-line hidden" id="frontHanVietLine"></p>
           <p class="tap-hint">Chạm để xem mặt sau</p>
+          <span class="record-id-tag" id="frontIdTag"></span>
         </div>
         <div class="card-face card-back">
-          <span class="format-tag" id="backTag">NGHĨA</span>
-          <span class="record-no-tag" id="backNoTag"></span>
+          <span class="side-tag">CHỮ HÁN</span>
           <button class="stamp" id="speakBackBtn" aria-label="Phát âm">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
           </button>
-          <div class="hanzi-small" id="backText">…</div>
+          <div class="card-main-hanzi" id="backText">…</div>
           <span class="pos-tag hidden" id="backPosTag"></span>
+          <p class="pinyin-line hidden" id="backPinyinLine"></p>
+          <span class="record-id-tag" id="backIdTag"></span>
         </div>
       </div>
     </div>
