@@ -253,6 +253,13 @@ input, select { font-family: inherit; }
 .hanzi-quiz-controls { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; }
 .hanzi-quiz-controls .ghost-btn { align-self: center; }
 
+/* ---- Luyện viết ngay trên flashcard ---- */
+.flashcard-practice {
+  border: 1px dashed var(--line); border-radius: var(--radius);
+  padding: 16px; margin-bottom: 16px; background: rgba(78,107,88,0.04);
+}
+.practice-label { font-size: 12px; color: var(--ink-soft); margin: 0 0 12px; text-align: center; }
+
 /* ---- Self-grade panel ---- */
 .self-grade { margin-bottom: 14px; text-align: center; }
 .self-grade-label { font-size: 12px; color: var(--ink-soft); font-weight: 600; margin: 0 0 4px; }

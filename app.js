@@ -145,6 +145,7 @@
     frontIdTag: $("frontIdTag"), backIdTag: $("backIdTag"),
     frontPosTag: $("frontPosTag"), backPosTag: $("backPosTag"),
     frontHanVietLine: $("frontHanVietLine"), backPinyinLine: $("backPinyinLine"),
+    flashcardPractice: $("flashcardPractice"), flashcardPracticeArea: $("flashcardPracticeArea"),
     speakFrontBtn: $("speakFrontBtn"), speakBackBtn: $("speakBackBtn"),
     prevBtn: $("prevBtn"), nextBtn: $("nextBtn"),
     quizStart: $("quizStart"), quizStartError: $("quizStartError"), startQuizBtn: $("startQuizBtn"),
@@ -212,10 +213,23 @@
   els.handwriteToggle.addEventListener("change", () => {
     localStorage.setItem(HANDWRITE_KEY, els.handwriteToggle.checked ? "1" : "0");
     syncHintOutlineVisibility();
+    refreshActiveWidgets();
   });
   els.hintOutlineToggle.addEventListener("change", () => {
     localStorage.setItem(HINT_OUTLINE_KEY, els.hintOutlineToggle.checked ? "1" : "0");
+    refreshActiveWidgets();
   });
+
+  // Áp dụng ngay lập tức cho màn hình đang mở khi đổi toggle liên quan tới
+  // viết tay/nét mờ gợi ý — không cần đợi sang thẻ/câu tiếp theo.
+  function refreshActiveWidgets() {
+    if (!els.viewQuiz.classList.contains("hidden") && !els.quizSession.classList.contains("hidden") && currentQuestion) {
+      renderQuestion();
+    }
+    if (!els.viewCard.classList.contains("hidden")) {
+      updatePracticeArea();
+    }
+  }
 
   function charCountFor(text) {
     return (text || "").toString().trim().length || 1;
@@ -619,6 +633,7 @@
   // ================= Flashcard =================
   let deck = [];
   let cardIndex = 0;
+  let cardIsFlipped = false;
 
   function buildFlashcardDeck() {
     const items = filteredItems();
@@ -661,9 +676,9 @@
       faceEls.extraLine.textContent = showPinyin ? item.pinyin : "";
       faceEls.extraLine.classList.toggle("hidden", !showPinyin);
     } else {
-      const hanViet = (item.hanViet || "").toString().trim();
-      faceEls.extraLine.textContent = hanViet ? "Hán Việt: " + hanViet : "";
-      faceEls.extraLine.classList.toggle("hidden", !hanViet);
+      const showHanViet = els.hanVietToggle.checked && (item.hanViet || "").toString().trim();
+      faceEls.extraLine.textContent = showHanViet ? "Hán Việt: " + item.hanViet : "";
+      faceEls.extraLine.classList.toggle("hidden", !showHanViet);
     }
 
     faceEls.idTag.textContent = item.id ? "ID: " + item.id : "";
@@ -672,6 +687,7 @@
 
   function renderCard() {
     els.flashcard.classList.remove("flipped");
+    cardIsFlipped = false;
     if (deck.length === 0) {
       els.frontText.textContent = "Không có từ/câu nào khớp bộ lọc";
       els.backText.textContent = "";
@@ -679,6 +695,7 @@
       [els.frontPosTag, els.backPosTag, els.frontHanVietLine, els.backPinyinLine].forEach((el) => el.classList.add("hidden"));
       els.frontIdTag.textContent = "";
       els.backIdTag.textContent = "";
+      els.flashcardPractice.classList.add("hidden");
       return;
     }
     const entry = deck[cardIndex];
@@ -696,6 +713,43 @@
     );
 
     els.cardProgressLabel.textContent = `Thẻ ${cardIndex + 1} / ${deck.length}`;
+    updatePracticeArea();
+  }
+
+  // Luyện viết chữ Hán ngay trên flashcard: hiện khi bật "Viết tay" VÀ mặt
+  // đang xem là mặt "nghĩa" (tức đang cần nhớ lại/viết ra chữ Hán tương ứng).
+  // Đây chỉ là luyện tập tự do, không chấm điểm, không ảnh hưởng tiến độ.
+  function updatePracticeArea() {
+    if (deck.length === 0) {
+      els.flashcardPractice.classList.add("hidden");
+      return;
+    }
+    const entry = deck[cardIndex];
+    const frontKind = entry.reversed ? "hanzi" : "meaning";
+    const backKind = entry.reversed ? "meaning" : "hanzi";
+    const visibleKind = cardIsFlipped ? backKind : frontKind;
+    const shouldShow = els.handwriteToggle.checked && visibleKind === "meaning";
+
+    els.flashcardPractice.classList.toggle("hidden", !shouldShow);
+    if (shouldShow) mountFlashcardPractice(els.flashcardPracticeArea, entry.item.hanzi);
+  }
+
+  function mountFlashcardPractice(container, hanziText) {
+    const chars = charsOf(hanziText);
+    if (HANZI_WRITER_READY && chars.length > 0) {
+      container.innerHTML = renderHanziQuizHtml(chars);
+      mountHanziQuiz(container, chars, {
+        onComplete: () => showToast("Viết đúng rồi! Lật thẻ để so đáp án."),
+        onSkip: () => {},
+        onLoadError: () => {
+          container.innerHTML = handwritePadHtml("hwPracticeCanvas");
+          mountHandwritePad(container, "hwPracticeCanvas", hanziText);
+        },
+      });
+    } else {
+      container.innerHTML = handwritePadHtml("hwPracticeCanvas");
+      mountHandwritePad(container, "hwPracticeCanvas", hanziText);
+    }
   }
 
   function goToCard(i) {
@@ -1069,6 +1123,7 @@
   els.hanVietToggle.checked = localStorage.getItem(HAN_VIET_TOGGLE_KEY) === "1";
   els.hanVietToggle.addEventListener("change", () => {
     localStorage.setItem(HAN_VIET_TOGGLE_KEY, els.hanVietToggle.checked ? "1" : "0");
+    renderCard();
   });
 
   els.tabs.addEventListener("click", (e) => {
@@ -1092,7 +1147,9 @@
     showToast("Đã xáo trộn bộ thẻ");
   });
   els.flashcard.addEventListener("click", () => {
-    els.flashcard.classList.toggle("flipped");
+    cardIsFlipped = !cardIsFlipped;
+    els.flashcard.classList.toggle("flipped", cardIsFlipped);
+    updatePracticeArea();
   });
   els.speakFrontBtn.addEventListener("click", (e) => {
     e.stopPropagation();
