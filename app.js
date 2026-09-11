@@ -5,7 +5,7 @@
   // Dán URL Apps Script Web App của bạn vào giữa 2 dấu ngoặc kép dưới đây.
   // Làm 1 lần duy nhất — app sẽ luôn dùng URL này, không cần dán lại kể cả
   // khi xóa cache trình duyệt hay dùng trên thiết bị khác.
-  const HARDCODED_API_URL = "";
+  const HARDCODED_API_URL = "https://script.google.com/macros/s/AKfycbygKvrnfLeaQE6UTV21t8ukge6OCczl-gpU95X-nXricvXvwuEMODv6Tf825ahwNgopJQ/exec";
 
   const CONFIG_KEY = "hsk-app-api-url"; // chỉ dùng dự phòng nếu chưa nhúng URL ở trên
   const PASSWORD_KEY = "hsk-app-password";
