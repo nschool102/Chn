@@ -2,15 +2,29 @@
   "use strict";
 
   // ================= CONFIG =================
-  // Dán URL Apps Script Web App của bạn vào giữa 2 dấu ngoặc kép dưới đây.
-  // Làm 1 lần duy nhất — app sẽ luôn dùng URL này, không cần dán lại kể cả
-  // khi xóa cache trình duyệt hay dùng trên thiết bị khác.
-  const HARDCODED_API_URL = "https://script.google.com/macros/s/AKfycbygKvrnfLeaQE6UTV21t8ukge6OCczl-gpU95X-nXricvXvwuEMODv6Tf825ahwNgopJQ/exec";
+  // URL Apps Script Web App được đọc từ file URL_WEBAPP.txt (cùng thư mục).
+  // Cần đổi URL sau này thì chỉ sửa file .txt đó, không cần đụng vào app.js.
+  const URL_FILE = "./URL_WEBAPP.txt";
 
-  const CONFIG_KEY = "hsk-app-api-url"; // chỉ dùng dự phòng nếu chưa nhúng URL ở trên
+  const CONFIG_KEY = "hsk-app-api-url"; // chỉ dùng dự phòng nếu không đọc được file .txt
   const PASSWORD_KEY = "hsk-app-password";
-  let API_URL = HARDCODED_API_URL || localStorage.getItem(CONFIG_KEY) || "";
+  let API_URL = "";
+  let usingFileUrl = false; // true nếu URL lấy được từ URL_WEBAPP.txt
   let APP_PASSWORD = localStorage.getItem(PASSWORD_KEY) || "";
+
+  async function resolveApiUrl() {
+    try {
+      // Thêm tham số chống cache để luôn đọc bản mới nhất của file .txt.
+      const res = await fetch(URL_FILE + "?t=" + Date.now(), { cache: "no-store" });
+      if (res.ok) {
+        const text = (await res.text()).trim();
+        if (text) return { url: text, fromFile: true };
+      }
+    } catch (err) {
+      // bỏ qua, rơi xuống phương án dự phòng bên dưới
+    }
+    return { url: localStorage.getItem(CONFIG_KEY) || "", fromFile: false };
+  }
 
   // ================= Field maps (tên cột "chuẩn" cho từng sheet) =================
   const HSK_FIELD = {
@@ -126,6 +140,7 @@
     viewCard: $("view-card"), viewQuiz: $("view-quiz"),
     shuffleBtn: $("shuffleBtn"), cardProgressLabel: $("cardProgressLabel"),
     flashcard: $("flashcard"),
+    frontSideTag: $("frontSideTag"), backSideTag: $("backSideTag"),
     frontText: $("frontText"), backText: $("backText"),
     frontIdTag: $("frontIdTag"), backIdTag: $("backIdTag"),
     frontPosTag: $("frontPosTag"), backPosTag: $("backPosTag"),
@@ -606,7 +621,8 @@
   let cardIndex = 0;
 
   function buildFlashcardDeck() {
-    deck = filteredItems();
+    const items = filteredItems();
+    deck = items.map((item) => ({ item, reversed: Math.random() < 0.5 }));
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -627,6 +643,33 @@
     el.style.fontSize = size + "px";
   }
 
+  // Vẽ 1 mặt thẻ theo "kind" ('meaning' hoặc 'hanzi'), dùng chung cho cả
+  // mặt trước lẫn mặt sau vì chiều hiển thị được xáo trộn ngẫu nhiên.
+  function renderFace(faceEls, kind, item) {
+    const isHanzi = kind === "hanzi";
+    const mainText = isHanzi ? (item.hanzi || "") : (item.meaning || "");
+    faceEls.text.textContent = mainText;
+    faceEls.text.className = isHanzi ? "card-main-hanzi" : "card-main-meaning";
+    fitText(faceEls.text, mainText, isHanzi ? 52 : 26);
+
+    const pos = (item.pos || "").toString().trim();
+    faceEls.posTag.textContent = pos;
+    faceEls.posTag.classList.toggle("hidden", !pos);
+
+    if (isHanzi) {
+      const showPinyin = els.pinyinToggle.checked && (item.pinyin || "").toString().trim();
+      faceEls.extraLine.textContent = showPinyin ? item.pinyin : "";
+      faceEls.extraLine.classList.toggle("hidden", !showPinyin);
+    } else {
+      const hanViet = (item.hanViet || "").toString().trim();
+      faceEls.extraLine.textContent = hanViet ? "Hán Việt: " + hanViet : "";
+      faceEls.extraLine.classList.toggle("hidden", !hanViet);
+    }
+
+    faceEls.idTag.textContent = item.id ? "ID: " + item.id : "";
+    faceEls.sideTag.textContent = isHanzi ? "CHỮ HÁN" : "NGHĨA";
+  }
+
   function renderCard() {
     els.flashcard.classList.remove("flipped");
     if (deck.length === 0) {
@@ -638,29 +681,19 @@
       els.backIdTag.textContent = "";
       return;
     }
-    const item = deck[cardIndex];
+    const entry = deck[cardIndex];
+    const item = entry.item;
+    const frontKind = entry.reversed ? "hanzi" : "meaning";
+    const backKind = entry.reversed ? "meaning" : "hanzi";
 
-    // Mặt 1 (trước): nghĩa tiếng Việt + loại từ + Hán Việt (nếu là vocab)
-    els.frontText.textContent = item.meaning || "";
-    fitText(els.frontText, item.meaning || "", 26);
-    const pos = (item.pos || "").toString().trim();
-    const hanViet = (item.hanViet || "").toString().trim();
-    els.frontPosTag.textContent = pos;
-    els.frontPosTag.classList.toggle("hidden", !pos);
-    els.frontHanVietLine.textContent = hanViet ? "Hán Việt: " + hanViet : "";
-    els.frontHanVietLine.classList.toggle("hidden", !hanViet);
-
-    // Mặt 2 (sau): chữ Hán + loại từ + pinyin (tùy toggle)
-    els.backText.textContent = item.hanzi || "";
-    fitText(els.backText, item.hanzi || "", 52);
-    els.backPosTag.textContent = pos;
-    els.backPosTag.classList.toggle("hidden", !pos);
-    const showPinyin = els.pinyinToggle.checked && (item.pinyin || "").toString().trim();
-    els.backPinyinLine.textContent = showPinyin ? item.pinyin : "";
-    els.backPinyinLine.classList.toggle("hidden", !showPinyin);
-
-    els.frontIdTag.textContent = item.id ? "ID: " + item.id : "";
-    els.backIdTag.textContent = item.id ? "ID: " + item.id : "";
+    renderFace(
+      { text: els.frontText, posTag: els.frontPosTag, extraLine: els.frontHanVietLine, idTag: els.frontIdTag, sideTag: els.frontSideTag },
+      frontKind, item
+    );
+    renderFace(
+      { text: els.backText, posTag: els.backPosTag, extraLine: els.backPinyinLine, idTag: els.backIdTag, sideTag: els.backSideTag },
+      backKind, item
+    );
 
     els.cardProgressLabel.textContent = `Thẻ ${cardIndex + 1} / ${deck.length}`;
   }
@@ -1004,7 +1037,7 @@
     els.setupError.textContent = "Đang kết nối…";
     const ok = await loadData(false);
     if (ok) {
-      if (!HARDCODED_API_URL) localStorage.setItem(CONFIG_KEY, API_URL);
+      if (!usingFileUrl) localStorage.setItem(CONFIG_KEY, API_URL);
       els.setupModal.classList.add("hidden");
       els.app.classList.remove("hidden");
     } else {
@@ -1012,18 +1045,14 @@
     }
   });
 
-  if (HARDCODED_API_URL) {
-    els.settingsBtn.classList.add("hidden");
-  } else {
-    els.settingsBtn.addEventListener("click", () => {
-      els.apiUrlInput.classList.remove("hidden");
-      els.apiUrlInput.value = API_URL;
-      els.setupTitle.textContent = "Cài đặt kết nối";
-      els.setupDesc.textContent = "Dán URL Apps Script Web App bạn đã deploy vào đây. Xem hướng dẫn trong file backend-apps-script.gs.txt đi kèm.";
-      els.setupError.textContent = "";
-      els.setupModal.classList.remove("hidden");
-    });
-  }
+  els.settingsBtn.addEventListener("click", () => {
+    els.apiUrlInput.classList.remove("hidden");
+    els.apiUrlInput.value = API_URL;
+    els.setupTitle.textContent = "Cài đặt kết nối";
+    els.setupDesc.textContent = "Dán URL Apps Script Web App bạn đã deploy vào đây. Xem hướng dẫn trong file backend-apps-script.gs.txt đi kèm.";
+    els.setupError.textContent = "";
+    els.setupModal.classList.remove("hidden");
+  });
 
   els.refreshBtn.addEventListener("click", () => loadData(true));
 
@@ -1068,12 +1097,12 @@
   els.speakFrontBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (deck.length === 0) return;
-    speak(deck[cardIndex].hanzi);
+    speak(deck[cardIndex].item.hanzi);
   });
   els.speakBackBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (deck.length === 0) return;
-    speak(deck[cardIndex].hanzi);
+    speak(deck[cardIndex].item.hanzi);
   });
   els.prevBtn.addEventListener("click", () => goToCard(cardIndex - 1));
   els.nextBtn.addEventListener("click", () => goToCard(cardIndex + 1));
@@ -1119,6 +1148,11 @@
 
   // ================= Init =================
   async function init() {
+    const resolved = await resolveApiUrl();
+    API_URL = resolved.url;
+    usingFileUrl = resolved.fromFile;
+    if (usingFileUrl) els.settingsBtn.classList.add("hidden"); // URL quản lý qua file .txt, khỏi cần chỉnh tay
+
     if (API_URL) {
       els.setupModal.classList.add("hidden");
       els.app.classList.remove("hidden");

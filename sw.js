@@ -1,4 +1,4 @@
-const CACHE_NAME = "hsk-app-cache-v13";
+const CACHE_NAME = "hsk-app-cache-v15";
 const ASSETS = [
   "./",
   "./index.html",
@@ -31,6 +31,13 @@ self.addEventListener("fetch", (event) => {
   // tới Apps Script API (khác origin) - luôn để đi thẳng ra mạng, dữ liệu mới nhất.
   if (url.origin !== self.location.origin) return;
   if (event.request.method !== "GET") return;
+
+  // URL_WEBAPP.txt cần luôn đọc bản mới nhất từ mạng - không bao giờ cache,
+  // để sửa file này là có tác dụng ngay, không cần đợi cache hết hạn.
+  if (url.pathname.endsWith("URL_WEBAPP.txt")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
