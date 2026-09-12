@@ -139,3 +139,208 @@ function doPost(e) {
     return _json({ ok: false, error: String(err) });
   }
 }
+
+/**
+ * ================================================================
+ * CÔNG CỤ TỰ ĐỘNG TẠO CỘT ALIGN (chỉ chạy thủ công, không liên quan
+ * gì tới doGet/doPost ở trên - đây là công cụ soạn dữ liệu)
+ * ================================================================
+ * Cách dùng:
+ * 1. Sau khi dán code này, tải lại (refresh) trang Google Sheet 1 lần
+ *    để menu "🈶 Công cụ ALIGN" xuất hiện trên thanh menu.
+ * 2. Vào menu đó > chọn "Tự động tách ALIGN (Giao Tiếp)" hoặc
+ *    "Tự động tách ALIGN (HSK Example)".
+ * 3. Hàm sẽ tách câu tiếng Trung theo từ đã có trong sheet HSK (khớp dài
+ *    nhất trước), tự điền nghĩa tiếng Việt tương ứng vào cột ALIGN /
+ *    EXAMPLE ALIGN — CHỈ với các dòng cột đó đang TRỐNG (không đè lên
+ *    dữ liệu bạn đã tự sửa).
+ * 4. Đây chỉ là bản NHÁP — hãy rà lại từng dòng và sửa nghĩa tiếng Việt
+ *    cho khớp đúng với câu dịch thật (nghĩa tra từ điển đơn lẻ nhiều khi
+ *    không khớp 100% cách dịch cả câu).
+ */
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('🈶 Công cụ ALIGN')
+    .addItem('Tự động tách ALIGN (Giao Tiếp)', 'autoAlignGiaoTiep')
+    .addItem('Tự động tách ALIGN (HSK Example)', 'autoAlignHskExample')
+    .addSeparator()
+    .addItem('Tạo khung ALIGN từ cột đếm (Giao Tiếp)', 'generateAlignTemplateGiaoTiep')
+    .addItem('Tạo khung ALIGN từ cột đếm (HSK Example)', 'generateAlignTemplateHskExample')
+    .addToUi();
+}
+
+// Xây từ điển {chữ Hán: nghĩa tiếng Việt} từ sheet HSK, sắp xếp theo độ dài
+// giảm dần để khớp từ dài nhất trước (vd ưu tiên "认识" trước "认").
+function _buildHskDict() {
+  var sheet = _ss().getSheetByName(HSK_SHEET_NAME);
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var vocabCol = headers.indexOf('VOCAB');
+  var meaningCol = headers.indexOf('MEANING');
+  if (vocabCol === -1 || meaningCol === -1) throw new Error('Sheet HSK thiếu cột VOCAB hoặc MEANING');
+
+  var dict = {};
+  for (var i = 1; i < values.length; i++) {
+    var word = values[i][vocabCol];
+    var meaning = values[i][meaningCol];
+    if (!word || !meaning) continue;
+    word = String(word).split('|')[0].trim(); // bỏ các biến thể "a | b", chỉ lấy dạng chính
+    if (!word || dict[word]) continue;
+    dict[word] = String(meaning).split(/[;,\/]/)[0].trim(); // lấy nghĩa đầu tiên nếu liệt kê nhiều nghĩa
+  }
+  var wordsSortedByLength = Object.keys(dict).sort(function (a, b) { return b.length - a.length; });
+  return { dict: dict, words: wordsSortedByLength };
+}
+
+// Tách 1 câu thành các cụm dựa theo từ điển (khớp dài nhất trước).
+// Ký tự không khớp được từ nào (dấu câu, chữ hiếm...) sẽ bị bỏ qua.
+function _segmentSentence(sentence, dictData) {
+  var dict = dictData.dict;
+  var words = dictData.words;
+  var chunks = [];
+  var i = 0;
+  while (i < sentence.length) {
+    var matched = null;
+    for (var w = 0; w < words.length; w++) {
+      var word = words[w];
+      if (word.length <= sentence.length - i && sentence.substr(i, word.length) === word) {
+        matched = word;
+        break;
+      }
+    }
+    if (matched) {
+      chunks.push({ zh: matched, vi: dict[matched] });
+      i += matched.length;
+    } else {
+      i += 1; // bỏ qua 1 ký tự không nhận diện được
+    }
+  }
+  return chunks;
+}
+
+// Xuất theo định dạng "đếm số ký tự" (vd: "1=được;2=tổng cộng;4=35 tệ")
+// thay vì gõ lại cả cụm chữ Hán - gọn hơn và app đọc lại chắc chắn khớp.
+function _chunksToAlignString(chunks) {
+  return chunks.map(function (c) { return c.zh.length + '=' + c.vi; }).join(';');
+}
+
+function autoAlignGiaoTiep() {
+  var sheet = _ss().getSheetByName(GIAOTIEP_SHEET_NAME);
+  if (!sheet) throw new Error('Không tìm thấy sheet GIAO TIẾP');
+  var dictData = _buildHskDict();
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var chnCol = headers.indexOf('CHN');
+  var alignCol = headers.indexOf('ALIGN');
+  if (chnCol === -1) throw new Error('Sheet GIAO TIẾP thiếu cột CHN');
+  if (alignCol === -1) {
+    alignCol = headers.length;
+    sheet.getRange(1, alignCol + 1).setValue('ALIGN');
+  }
+
+  var filled = 0;
+  for (var r = 1; r < values.length; r++) {
+    if (values[r][alignCol]) continue; // đã có sẵn, không đè
+    var sentence = values[r][chnCol];
+    if (!sentence) continue;
+    var chunks = _segmentSentence(String(sentence), dictData);
+    if (chunks.length === 0) continue;
+    sheet.getRange(r + 1, alignCol + 1).setValue(_chunksToAlignString(chunks));
+    filled++;
+  }
+  SpreadsheetApp.getUi().alert('Đã tự động điền ' + filled + ' dòng ALIGN (Giao Tiếp). Nhớ rà lại và sửa nghĩa cho khớp câu dịch thật.');
+}
+
+function autoAlignHskExample() {
+  var sheet = _ss().getSheetByName(HSK_SHEET_NAME);
+  if (!sheet) throw new Error('Không tìm thấy sheet HSK');
+  var dictData = _buildHskDict();
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var exampleCol = headers.indexOf('EXAMPLE');
+  var alignCol = headers.indexOf('EXAMPLE ALIGN');
+  if (exampleCol === -1) throw new Error('Sheet HSK thiếu cột EXAMPLE');
+  if (alignCol === -1) {
+    alignCol = headers.length;
+    sheet.getRange(1, alignCol + 1).setValue('EXAMPLE ALIGN');
+  }
+
+  var filled = 0;
+  for (var r = 1; r < values.length; r++) {
+    if (values[r][alignCol]) continue;
+    var sentence = values[r][exampleCol];
+    if (!sentence) continue;
+    var chunks = _segmentSentence(String(sentence), dictData);
+    if (chunks.length === 0) continue;
+    sheet.getRange(r + 1, alignCol + 1).setValue(_chunksToAlignString(chunks));
+    filled++;
+  }
+  SpreadsheetApp.getUi().alert('Đã tự động điền ' + filled + ' dòng EXAMPLE ALIGN (HSK). Nhớ rà lại và sửa nghĩa cho khớp câu dịch thật.');
+}
+
+/**
+ * ================================================================
+ * TẠO KHUNG ALIGN TỪ 1 CỘT ĐẾM DO NGƯỜI DÙNG TỰ GÕ
+ * ================================================================
+ * Cách dùng:
+ * 1. Tự thêm 1 cột tên đúng là "ALIGN_COUNTS" vào sheet GIAO TIẾP (và/hoặc
+ *    sheet HSK nếu muốn dùng cho EXAMPLE). Đổi ALIGN_COUNTS_COL_NAME bên
+ *    dưới nếu bạn muốn đặt tên cột khác.
+ * 2. Ở mỗi dòng, gõ số ký tự từng cụm cách nhau bởi dấu "-", kết thúc bằng
+ *    ";" — ví dụ: 1-2-4;  hoặc  2-3-1;
+ * 3. Vào menu "🈶 Công cụ ALIGN" > "Tạo khung ALIGN từ cột đếm (...)"
+ * 4. Cột ALIGN / EXAMPLE ALIGN sẽ được ĐIỀN SẴN (giá trị thường, không phải
+ *    công thức) dạng: 1=; 2=; 4=;  — chỉ điền vào dòng đang TRỐNG, không đè
+ *    lên dữ liệu đã có.
+ * 5. Bạn tự gõ nghĩa tiếng Việt vào ngay sau từng dấu "=" là xong, ví dụ:
+ *    1=được; 2=tổng cộng; 4=35 tệ;
+ */
+var ALIGN_COUNTS_COL_NAME = 'ALIGN_COUNTS'; // đổi tên này nếu cột đếm của bạn đặt tên khác
+
+// "1-2-4;" hoặc "1-2-4" -> "1=; 2=; 4=;"
+function _expandAlignTemplate(countsStr) {
+  if (!countsStr) return '';
+  var cleaned = countsStr.toString().trim().replace(/;+\s*$/, '');
+  var parts = cleaned.split('-')
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s !== '' && /^\d+$/.test(s); });
+  if (parts.length === 0) return '';
+  return parts.map(function (n) { return n + '=;'; }).join(' ');
+}
+
+function _generateAlignTemplateForSheet(sheetName, alignColName) {
+  var sheet = _ss().getSheetByName(sheetName);
+  if (!sheet) throw new Error('Không tìm thấy sheet ' + sheetName);
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var countsCol = headers.indexOf(ALIGN_COUNTS_COL_NAME);
+  var alignCol = headers.indexOf(alignColName);
+  if (countsCol === -1) throw new Error('Không tìm thấy cột ' + ALIGN_COUNTS_COL_NAME + ' trong sheet ' + sheetName + '. Hãy tự thêm cột này trước.');
+  if (alignCol === -1) {
+    alignCol = headers.length;
+    sheet.getRange(1, alignCol + 1).setValue(alignColName);
+  }
+
+  var filled = 0;
+  for (var r = 1; r < values.length; r++) {
+    if (values[r][alignCol]) continue; // đã có sẵn, không đè
+    var countsStr = values[r][countsCol];
+    if (!countsStr) continue;
+    var template = _expandAlignTemplate(countsStr);
+    if (!template) continue;
+    sheet.getRange(r + 1, alignCol + 1).setValue(template);
+    filled++;
+  }
+  SpreadsheetApp.getUi().alert('Đã tạo khung ALIGN cho ' + filled + ' dòng. Giờ vào cột ' + alignColName + ' điền nghĩa tiếng Việt sau từng dấu "=".');
+}
+
+function generateAlignTemplateGiaoTiep() {
+  _generateAlignTemplateForSheet(GIAOTIEP_SHEET_NAME, 'ALIGN');
+}
+
+function generateAlignTemplateHskExample() {
+  _generateAlignTemplateForSheet(HSK_SHEET_NAME, 'EXAMPLE ALIGN');
+}

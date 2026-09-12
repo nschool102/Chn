@@ -36,6 +36,7 @@
     EXAMPLE: "EXAMPLE",
     EXAMPLE_PINYIN: "EXAMPLE PINYIN",
     EXAMPLE_MEANING: "EXAMPLE MEANING",
+    EXAMPLE_ALIGN: "EXAMPLE ALIGN",
     LEVEL: "LEVEL",
     HAN_VIET: "HAN-VIET",
     TOPIC: "TOPIC",
@@ -45,6 +46,7 @@
     CHN: "CHN",
     PINYIN: "PINYIN",
     VIE: "VIE",
+    ALIGN: "ALIGN",
     TOPIC: "TOPIC",
   };
 
@@ -102,7 +104,7 @@
       id: normStr(row[HSK_FIELD.ID]), kind: "vocab",
       hanzi: row[HSK_FIELD.WORD], pinyin: row[HSK_FIELD.PINYIN],
       pos: row[HSK_FIELD.POS], meaning: row[HSK_FIELD.MEANING], hanViet: row[HSK_FIELD.HAN_VIET],
-      topic: row[HSK_FIELD.TOPIC], level: row[HSK_FIELD.LEVEL],
+      topic: row[HSK_FIELD.TOPIC], level: row[HSK_FIELD.LEVEL], align: "",
     };
   }
   function hskRowToExampleItem(row) {
@@ -110,7 +112,7 @@
       id: normStr(row[HSK_FIELD.ID]), kind: "example",
       hanzi: row[HSK_FIELD.EXAMPLE], pinyin: row[HSK_FIELD.EXAMPLE_PINYIN],
       pos: "", meaning: row[HSK_FIELD.EXAMPLE_MEANING], hanViet: "",
-      topic: row[HSK_FIELD.TOPIC], level: row[HSK_FIELD.LEVEL],
+      topic: row[HSK_FIELD.TOPIC], level: row[HSK_FIELD.LEVEL], align: row[HSK_FIELD.EXAMPLE_ALIGN],
     };
   }
   function gtRowToSentenceItem(row) {
@@ -118,9 +120,124 @@
       id: normStr(row[GT_FIELD.ID]), kind: "sentence",
       hanzi: row[GT_FIELD.CHN], pinyin: row[GT_FIELD.PINYIN],
       pos: "", meaning: row[GT_FIELD.VIE], hanViet: "",
-      topic: row[GT_FIELD.TOPIC], level: "",
+      topic: row[GT_FIELD.TOPIC], level: "", align: row[GT_FIELD.ALIGN],
     };
   }
+
+  // ================= Tô màu cụm từ ghép cặp Trung-Việt =================
+  // Cột ALIGN (sheet GIAO TIẾP) / EXAMPLE ALIGN (sheet HSK) hỗ trợ 2 cách ghi:
+  //
+  // (A) Đếm số ký tự (khuyên dùng - gọn, không lo gõ sai cụm chữ Hán):
+  //     1=được;2=tổng cộng;4=35 tệ
+  //     Nghĩa là: 1 ký tự Hán đầu tiên = "được", 2 ký tự kế tiếp = "tổng cộng",
+  //     4 ký tự cuối = "35 tệ". Dấu câu (,.?!...) tự động bị bỏ qua khi đếm.
+  //
+  // (B) Gõ thẳng cụm chữ Hán (cách cũ, vẫn dùng được):
+  //     好的=được;热的=nóng;还是=hay;冰的=đá
+  //
+  // App tự nhận diện: nếu phần bên trái dấu "=" của mục ĐẦU TIÊN là số thì
+  // hiểu cả ô đó theo cách (A), ngược lại hiểu theo cách (B). Không trộn 2
+  // cách trong cùng 1 ô.
+  const ALIGN_COLORS = ["#E8888A", "#4E9C7C", "#9B7FD1", "#C99A2E", "#4A90C4", "#D17FAE", "#8A7355", "#3FA8A0"];
+
+  function isHanziChar(ch) {
+    return ch >= "\u4e00" && ch <= "\u9fff";
+  }
+
+  function parseAlignPairs(alignStr) {
+    if (!alignStr) return [];
+    return alignStr
+      .toString()
+      .split(";")
+      .map((pair) => {
+        const idx = pair.indexOf("=");
+        if (idx === -1) return null;
+        const left = pair.slice(0, idx).trim();
+        const vi = pair.slice(idx + 1).trim();
+        if (!left) return null;
+        // Giữ lại kể cả vi rỗng (đang gõ dở) - nếu bỏ hẳn sẽ làm lệch vị trí
+        // đếm ký tự của các cụm phía sau trong cùng câu.
+        return { left, vi };
+      })
+      .filter(Boolean);
+  }
+
+  // Chuyển danh sách {left, vi} thành {zh, vi} thật, xử lý cả 2 định dạng ở trên.
+  // "sentence" luôn là câu tiếng Trung gốc (item.hanzi), dùng để tính vị trí
+  // ký tự khi ở chế độ đếm số.
+  function resolveAlignPairs(sentence, rawPairs) {
+    if (rawPairs.length === 0) return [];
+    const countMode = /^\d+$/.test(rawPairs[0].left);
+    if (!countMode) {
+      return rawPairs.map((p) => ({ zh: p.left, vi: p.vi }));
+    }
+    const text = (sentence || "").toString();
+    const hanziPositions = [];
+    for (let i = 0; i < text.length; i++) {
+      if (isHanziChar(text[i])) hanziPositions.push(i);
+    }
+    let cursor = 0;
+    const resolved = [];
+    rawPairs.forEach((p) => {
+      const count = parseInt(p.left, 10) || 0;
+      if (count <= 0 || cursor >= hanziPositions.length) return;
+      const startPos = hanziPositions[cursor];
+      const endCursorIdx = Math.min(cursor + count, hanziPositions.length) - 1;
+      const endPos = hanziPositions[endCursorIdx];
+      resolved.push({ zh: text.slice(startPos, endPos + 1), vi: p.vi });
+      cursor += count;
+    });
+    return resolved;
+  }
+
+  function escapeHtml(s) {
+    return (s || "").toString().replace(/[&<>"']/g, (c) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
+  }
+
+  // Tìm từng cụm trong text (không chồng lấn) và bọc span màu tương ứng
+  function highlightSegments(text, values) {
+    text = (text || "").toString();
+    const matches = [];
+    values.forEach((value, i) => {
+      if (!value) return;
+      const idx = text.indexOf(value);
+      if (idx !== -1) matches.push({ start: idx, end: idx + value.length, colorIndex: i });
+    });
+    matches.sort((a, b) => a.start - b.start);
+    let html = "";
+    let pos = 0;
+    matches.forEach((m) => {
+      if (m.start < pos) return; // bỏ qua nếu chồng lấn với cụm trước
+      const color = ALIGN_COLORS[m.colorIndex % ALIGN_COLORS.length];
+      html += escapeHtml(text.slice(pos, m.start));
+      html += `<span class="align-chunk" style="background:${color}26;border-bottom:2px solid ${color};color:${color}">${escapeHtml(text.slice(m.start, m.end))}</span>`;
+      pos = m.end;
+    });
+    html += escapeHtml(text.slice(pos));
+    return html;
+  }
+
+  // Gán nội dung có tô màu (nếu có dữ liệu ALIGN) hoặc text thường vào 1 phần tử.
+  // "item" cần có .hanzi (câu tiếng Trung gốc, dùng để giải mã chế độ đếm số)
+  // và .align (chuỗi cấu hình). "side" là 'hanzi' hoặc 'meaning'.
+  function setHighlightedText(el, text, item, side) {
+    const rawPairs = parseAlignPairs(item && item.align);
+    if (rawPairs.length === 0) {
+      el.textContent = text || "";
+      return;
+    }
+    const resolved = resolveAlignPairs(item.hanzi, rawPairs);
+    if (resolved.length === 0) {
+      el.textContent = text || "";
+      return;
+    }
+    const values = resolved.map((p) => (p.vi ? (side === "hanzi" ? p.zh : p.vi) : ""));
+    el.innerHTML = highlightSegments(text, values);
+  }
+
+
 
   // ================= DOM =================
   const $ = (id) => document.getElementById(id);
@@ -663,7 +780,7 @@
   function renderFace(faceEls, kind, item) {
     const isHanzi = kind === "hanzi";
     const mainText = isHanzi ? (item.hanzi || "") : (item.meaning || "");
-    faceEls.text.textContent = mainText;
+    setHighlightedText(faceEls.text, mainText, item, isHanzi ? "hanzi" : "meaning");
     faceEls.text.className = isHanzi ? "card-main-hanzi" : "card-main-meaning";
     fitText(faceEls.text, mainText, isHanzi ? 52 : 26);
 
@@ -904,14 +1021,14 @@
 
     if (type === "hanziToMeaning") {
       els.quizPromptTag.textContent = "CHỮ / CÂU";
-      els.quizPromptText.textContent = item.hanzi;
+      setHighlightedText(els.quizPromptText, item.hanzi, item, "hanzi");
       fitText(els.quizPromptText, item.hanzi, 48);
       els.quizAnswers.innerHTML = `
         <label for="ansMeaning">Gõ lại NGHĨA</label>
         <input type="text" id="ansMeaning" class="text-input" autocomplete="off">`;
     } else if (type === "meaningToHanzi") {
       els.quizPromptTag.textContent = "NGHĨA";
-      els.quizPromptText.textContent = item.meaning;
+      setHighlightedText(els.quizPromptText, item.meaning, item, "meaning");
       fitText(els.quizPromptText, item.meaning, 32);
       if (handwrite) {
         els.submitAnswerBtn.classList.add("hidden");
