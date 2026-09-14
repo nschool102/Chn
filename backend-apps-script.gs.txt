@@ -80,6 +80,10 @@ function _getProgressMap() {
 }
 
 function doGet(e) {
+  if (e && e.parameter && e.parameter.view === 'editor') {
+    return HtmlService.createHtmlOutput(_editorHtml(true))
+      .setTitle('Cập nhật Giao Tiếp');
+  }
   try {
     var ss = _ss();
     var hsk = _sheetToRows(ss.getSheetByName(HSK_SHEET_NAME));
@@ -134,6 +138,11 @@ function doPost(e) {
       return _json({ ok: true, id: id, newValue: newVal });
     }
 
+    if (action === 'updateGiaoTiep') {
+      var result = _updateGiaoTiepRow(body.id, body.vie, body.align, body.alignCounts);
+      return _json(result);
+    }
+
     return _json({ ok: false, error: 'Hành động không xác định: ' + action });
   } catch (err) {
     return _json({ ok: false, error: String(err) });
@@ -167,6 +176,9 @@ function onOpen() {
     .addSeparator()
     .addItem('Tạo khung ALIGN từ cột đếm (Giao Tiếp)', 'generateAlignTemplateGiaoTiep')
     .addItem('Tạo khung ALIGN từ cột đếm (HSK Example)', 'generateAlignTemplateHskExample')
+    .addSeparator()
+    .addItem('📝 Form cập nhật Giao Tiếp (VIE/ALIGN/ALIGN_COUNTS)', 'openGiaoTiepEditorDialog')
+    .addItem('🔤 Bật tự động dịch VIE khi nhập CHN', 'installAutoTranslateTrigger')
     .addToUi();
 }
 
@@ -291,22 +303,27 @@ function autoAlignHskExample() {
  *    dưới nếu bạn muốn đặt tên cột khác.
  * 2. Ở mỗi dòng, gõ số ký tự từng cụm cách nhau bởi dấu "-", kết thúc bằng
  *    ";" — ví dụ: 1-2-4;  hoặc  2-3-1;
+ *    Muốn pinyin của cụm đó cũng được tô màu, ghi thêm ":số từ pinyin" —
+ *    vd cụm "在这里" (3 chữ) có pinyin ghi liền thành 1 từ "zhèlǐ" gộp
+ *    chung với "Zài" thành 2 từ, thì ghi "3:2". Không ghi ":P" thì cụm đó
+ *    vẫn tô hanzi + nghĩa bình thường, chỉ riêng pinyin không được tô.
+ *    Ví dụ đầy đủ 1 dòng: 3:2-1:1-2:1-2:1;
  * 3. Vào menu "🈶 Công cụ ALIGN" > "Tạo khung ALIGN từ cột đếm (...)"
  * 4. Cột ALIGN / EXAMPLE ALIGN sẽ được ĐIỀN SẴN (giá trị thường, không phải
- *    công thức) dạng: 1=; 2=; 4=;  — chỉ điền vào dòng đang TRỐNG, không đè
- *    lên dữ liệu đã có.
+ *    công thức) dạng: 3:2=; 1:1=; 2:1=; 2:1=;  — chỉ điền vào dòng đang
+ *    TRỐNG, không đè lên dữ liệu đã có.
  * 5. Bạn tự gõ nghĩa tiếng Việt vào ngay sau từng dấu "=" là xong, ví dụ:
- *    1=được; 2=tổng cộng; 4=35 tệ;
+ *    3:2=tại chỗ; 1:1=uống; 2:1=hay là; 2:1=mang đi;
  */
 var ALIGN_COUNTS_COL_NAME = 'ALIGN_COUNTS'; // đổi tên này nếu cột đếm của bạn đặt tên khác
 
-// "1-2-4;" hoặc "1-2-4" -> "1=; 2=; 4=;"
+// "1-2-4;" hoặc "3:2-1:1-2:1-2:1;" -> "1=; 2=; 4=;" (giữ nguyên phần ":P" nếu có)
 function _expandAlignTemplate(countsStr) {
   if (!countsStr) return '';
   var cleaned = countsStr.toString().trim().replace(/;+\s*$/, '');
   var parts = cleaned.split('-')
     .map(function (s) { return s.trim(); })
-    .filter(function (s) { return s !== '' && /^\d+$/.test(s); });
+    .filter(function (s) { return s !== '' && /^\d+(:\d+)?$/.test(s); });
   if (parts.length === 0) return '';
   return parts.map(function (n) { return n + '=;'; }).join(' ');
 }
@@ -343,4 +360,230 @@ function generateAlignTemplateGiaoTiep() {
 
 function generateAlignTemplateHskExample() {
   _generateAlignTemplateForSheet(HSK_SHEET_NAME, 'EXAMPLE ALIGN');
+}
+
+/**
+ * ================================================================
+ * TỰ ĐỘNG DỊCH CỘT VIE KHI NHẬP CỘT CHN (sheet GIAO TIẾP)
+ * ================================================================
+ * Cách bật (chỉ làm 1 lần):
+ * 1. Vào menu "🈶 Công cụ ALIGN" > "🔤 Bật tự động dịch VIE khi nhập CHN"
+ * 2. Cấp quyền nếu được hỏi.
+ * Từ đó về sau: gõ câu vào cột CHN (ô VIE cùng dòng đang TRỐNG) sẽ tự động
+ * dịch và điền vào VIE. Nếu VIE đã có nội dung (dù tự gõ hay đã tự dịch
+ * trước đó), trigger sẽ KHÔNG đụng vào nữa — bạn sửa VIE thoải mái, sửa
+ * xong không bị ghi đè lại, và việc sửa VIE cũng không ảnh hưởng gì tới
+ * cột CHN hay PINYIN vì trigger chỉ lắng nghe thay đổi ở cột CHN.
+ */
+function installAutoTranslateTrigger() {
+  var triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function (t) {
+    if (t.getHandlerFunction() === 'handleEditAutoTranslate') {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+  ScriptApp.newTrigger('handleEditAutoTranslate')
+    .forSpreadsheet(_ss())
+    .onEdit()
+    .create();
+  SpreadsheetApp.getUi().alert('Đã bật tự động dịch VIE khi nhập CHN (sheet GIAO TIẾP).');
+}
+
+function handleEditAutoTranslate(e) {
+  try {
+    var sheet = e.range.getSheet();
+    if (sheet.getName() !== GIAOTIEP_SHEET_NAME) return;
+    if (e.range.getRow() === 1) return; // bỏ qua dòng tiêu đề
+
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var chnCol = headers.indexOf('CHN') + 1;
+    var vieCol = headers.indexOf('VIE') + 1;
+    if (chnCol === 0 || vieCol === 0) return;
+    if (e.range.getColumn() !== chnCol) return; // chỉ xử lý khi CHÍNH cột CHN được sửa
+
+    var vieCell = sheet.getRange(e.range.getRow(), vieCol);
+    if (vieCell.getValue()) return; // VIE đã có sẵn (tự gõ hoặc auto trước đó) - không đè
+
+    var chnValue = e.range.getValue();
+    if (!chnValue) return;
+
+    var translated = LanguageApp.translate(chnValue.toString(), 'zh', 'vi');
+    vieCell.setValue(translated);
+  } catch (err) {
+    // Bỏ qua lỗi dịch (vd lỗi mạng tạm thời) - không chặn việc nhập liệu
+  }
+}
+
+/**
+ * ================================================================
+ * FORM CẬP NHẬT VIE / ALIGN / ALIGN_COUNTS
+ * ================================================================
+ * Dùng được theo 2 cách, cùng 1 giao diện:
+ * (a) Trong Google Sheet: menu "🈶 Công cụ ALIGN" > "📝 Form cập nhật Giao
+ *     Tiếp" — mở hộp thoại ngay trong Sheet, không cần mật khẩu (đã chạy
+ *     với quyền chủ sở hữu sẵn).
+ * (b) Độc lập trên web, không cần mở Sheet: mở URL Web App kèm thêm
+ *     "?view=editor" ở cuối, ví dụ:
+ *     https://script.google.com/macros/s/XXXXXXXX/exec?view=editor
+ *     — cách này cần nhập mật khẩu (nếu CONFIG!A1 có đặt) để lưu được.
+ */
+
+function openGiaoTiepEditorDialog() {
+  var html = HtmlService.createHtmlOutput(_editorHtml(false))
+    .setWidth(720)
+    .setHeight(640);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Cập nhật Giao Tiếp (VIE / ALIGN / ALIGN_COUNTS)');
+}
+
+// Gọi trực tiếp từ hộp thoại trong Sheet qua google.script.run - không cần mật khẩu
+function getGiaoTiepRowsForEditor() {
+  var sheet = _ss().getSheetByName(GIAOTIEP_SHEET_NAME);
+  if (!sheet) return [];
+  var data = _sheetToRows(sheet);
+  return data.rows.map(function (r) {
+    return {
+      id: r['SENT_ID'] || '',
+      chn: r['CHN'] || '',
+      pinyin: r['PINYIN'] || '',
+      vie: r['VIE'] || '',
+      align: r['ALIGN'] || '',
+      alignCounts: r[ALIGN_COUNTS_COL_NAME] || '',
+    };
+  });
+}
+
+function saveGiaoTiepRowFromEditor(id, vie, align, alignCounts) {
+  return _updateGiaoTiepRow(id, vie, align, alignCounts);
+}
+
+// Dùng chung cho cả doPost (web độc lập, có kiểm tra mật khẩu ở doPost trước
+// khi gọi hàm này) và hộp thoại trong Sheet (chạy với quyền chủ sở hữu).
+function _updateGiaoTiepRow(id, vie, align, alignCounts) {
+  id = String(id || '').trim();
+  if (!id) throw new Error('Thiếu ID');
+  var sheet = _ss().getSheetByName(GIAOTIEP_SHEET_NAME);
+  if (!sheet) throw new Error('Không tìm thấy sheet GIAO TIẾP');
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var idCol = headers.indexOf('SENT_ID');
+  var vieCol = headers.indexOf('VIE');
+  var alignCol = headers.indexOf('ALIGN');
+  var countsCol = headers.indexOf(ALIGN_COUNTS_COL_NAME);
+  if (idCol === -1) throw new Error('Sheet GIAO TIẾP thiếu cột SENT_ID');
+
+  var foundRow = -1;
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][idCol]).trim() === id) { foundRow = i + 1; break; }
+  }
+  if (foundRow === -1) throw new Error('Không tìm thấy dòng có SENT_ID = ' + id);
+
+  if (vieCol !== -1 && typeof vie === 'string') sheet.getRange(foundRow, vieCol + 1).setValue(vie);
+  if (alignCol !== -1 && typeof align === 'string') sheet.getRange(foundRow, alignCol + 1).setValue(align);
+  if (countsCol !== -1 && typeof alignCounts === 'string') sheet.getRange(foundRow, countsCol + 1).setValue(alignCounts);
+
+  return { ok: true, id: id };
+}
+
+// "standalone=true" -> phục vụ qua doGet ?view=editor (dùng fetch + mật khẩu)
+// "standalone=false" -> hiện trong hộp thoại của Sheet (dùng google.script.run)
+function _editorHtml(standalone) {
+  var apiUrl = ScriptApp.getService().getUrl();
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<style>' +
+    'body{font-family:-apple-system,"Segoe UI",Roboto,sans-serif;margin:0;padding:16px;background:#F7F3E9;color:#2B2622;}' +
+    'h3{margin:0 0 14px;}' +
+    'input,textarea,select{width:100%;box-sizing:border-box;padding:8px;margin:4px 0 12px;border:1px solid #E4DCC8;border-radius:8px;font-size:14px;font-family:inherit;}' +
+    'select[multiple],select{height:auto;}' +
+    'button{background:#B23434;color:#fff;border:none;padding:10px 16px;border-radius:8px;cursor:pointer;font-weight:bold;font-size:14px;}' +
+    'button:active{background:#8F2A2A;}' +
+    'label{font-size:12px;font-weight:600;color:#6B6255;display:block;}' +
+    '.readonly{background:#EFE8D8;padding:8px;border-radius:8px;margin-bottom:10px;font-size:16px;word-break:break-word;}' +
+    '.status{font-size:13px;margin-top:8px;min-height:16px;}' +
+    '.status.ok{color:#3B5343;font-weight:600;} .status.err{color:#8F2A2A;font-weight:600;}' +
+    '</style></head><body>' +
+    '<h3>Cập nhật Giao Tiếp</h3>' +
+    (standalone ? '<label>Mật khẩu (nếu Sheet có đặt trong CONFIG!A1)</label><input type="password" id="pw">' : '') +
+    '<label>Tìm theo SENT_ID hoặc câu tiếng Trung</label>' +
+    '<input type="text" id="search" placeholder="Gõ để lọc...">' +
+    '<select id="rowSelect" size="6"></select>' +
+    '<div id="detail" style="display:none">' +
+    '<label>Câu tiếng Trung (CHN)</label><div class="readonly" id="chnView"></div>' +
+    '<label>Pinyin (chỉ xem, sửa trực tiếp trong Sheet)</label><div class="readonly" id="pinyinView"></div>' +
+    '<label>VIE</label><textarea id="vieInput" rows="2"></textarea>' +
+    '<label>ALIGN</label><textarea id="alignInput" rows="2"></textarea>' +
+    '<label>ALIGN_COUNTS</label><input type="text" id="countsInput">' +
+    '<button id="saveBtn">Lưu</button>' +
+    '<p class="status" id="status"></p>' +
+    '</div>' +
+    '<script>' +
+    'var STANDALONE = ' + (standalone ? 'true' : 'false') + ';' +
+    'var API_URL = ' + JSON.stringify(apiUrl) + ';' +
+    'var rows = []; var selected = null;' +
+    'function loadRows() {' +
+    '  if (!STANDALONE) {' +
+    '    google.script.run.withSuccessHandler(function(data){ rows = data; renderList(); }).getGiaoTiepRowsForEditor();' +
+    '  } else {' +
+    '    fetch(API_URL).then(function(r){return r.json();}).then(function(json){' +
+    '      rows = (json.giaoTiepRows||[]).map(function(r){' +
+    '        return {id:r.SENT_ID||"",chn:r.CHN||"",pinyin:r.PINYIN||"",vie:r.VIE||"",align:r.ALIGN||"",alignCounts:r.ALIGN_COUNTS||""};' +
+    '      });' +
+    '      renderList();' +
+    '    }).catch(function(err){ document.getElementById("status").textContent = "Không tải được dữ liệu: " + err.message; });' +
+    '  }' +
+    '}' +
+    'function renderList() {' +
+    '  var q = document.getElementById("search").value.trim().toLowerCase();' +
+    '  var sel = document.getElementById("rowSelect");' +
+    '  sel.innerHTML = "";' +
+    '  rows.filter(function(r){' +
+    '    if (!q) return true;' +
+    '    return (r.id||"").toLowerCase().indexOf(q)!==-1 || (r.chn||"").toLowerCase().indexOf(q)!==-1;' +
+    '  }).forEach(function(r){' +
+    '    var opt = document.createElement("option");' +
+    '    opt.value = r.id;' +
+    '    opt.textContent = r.id + " — " + r.chn;' +
+    '    sel.appendChild(opt);' +
+    '  });' +
+    '}' +
+    'document.getElementById("search").addEventListener("input", renderList);' +
+    'document.getElementById("rowSelect").addEventListener("change", function(){' +
+    '  var id = this.value;' +
+    '  selected = rows.filter(function(r){ return r.id === id; })[0];' +
+    '  if (!selected) return;' +
+    '  document.getElementById("detail").style.display = "block";' +
+    '  document.getElementById("chnView").textContent = selected.chn;' +
+    '  document.getElementById("pinyinView").textContent = selected.pinyin;' +
+    '  document.getElementById("vieInput").value = selected.vie;' +
+    '  document.getElementById("alignInput").value = selected.align;' +
+    '  document.getElementById("countsInput").value = selected.alignCounts;' +
+    '  document.getElementById("status").textContent = "";' +
+    '});' +
+    'document.getElementById("saveBtn").addEventListener("click", function(){' +
+    '  if (!selected) return;' +
+    '  var vie = document.getElementById("vieInput").value;' +
+    '  var align = document.getElementById("alignInput").value;' +
+    '  var counts = document.getElementById("countsInput").value;' +
+    '  var statusEl = document.getElementById("status");' +
+    '  statusEl.textContent = "Đang lưu..."; statusEl.className = "status";' +
+    '  if (!STANDALONE) {' +
+    '    google.script.run.withSuccessHandler(function(){' +
+    '      statusEl.textContent = "Đã lưu!"; statusEl.className = "status ok";' +
+    '      selected.vie=vie; selected.align=align; selected.alignCounts=counts;' +
+    '    }).withFailureHandler(function(err){' +
+    '      statusEl.textContent = "Lỗi: " + err.message; statusEl.className = "status err";' +
+    '    }).saveGiaoTiepRowFromEditor(selected.id, vie, align, counts);' +
+    '  } else {' +
+    '    var pw = document.getElementById("pw").value;' +
+    '    fetch(API_URL, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"},' +
+    '      body: JSON.stringify({action:"updateGiaoTiep", password: pw, id: selected.id, vie: vie, align: align, alignCounts: counts})' +
+    '    }).then(function(r){return r.json();}).then(function(json){' +
+    '      if (json.ok) { statusEl.textContent = "Đã lưu!"; statusEl.className = "status ok"; selected.vie=vie; selected.align=align; selected.alignCounts=counts; }' +
+    '      else { statusEl.textContent = "Lỗi: " + json.error; statusEl.className = "status err"; }' +
+    '    }).catch(function(err){ statusEl.textContent = "Lỗi mạng: " + err.message; statusEl.className = "status err"; });' +
+    '  }' +
+    '});' +
+    'loadRows();' +
+    '</script></body></html>';
 }

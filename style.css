@@ -260,6 +260,8 @@ input, select { font-family: inherit; }
 }
 .practice-label { font-size: 12px; color: var(--ink-soft); margin: 0 0 12px; text-align: center; }
 
+.align-chunk { font-weight: 700; }
+
 /* ---- Self-grade panel ---- */
 .self-grade { margin-bottom: 14px; text-align: center; }
 .self-grade-label { font-size: 12px; color: var(--ink-soft); font-weight: 600; margin: 0 0 4px; }

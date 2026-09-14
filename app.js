@@ -132,12 +132,20 @@
   //     Nghĩa là: 1 ký tự Hán đầu tiên = "được", 2 ký tự kế tiếp = "tổng cộng",
   //     4 ký tự cuối = "35 tệ". Dấu câu (,.?!...) tự động bị bỏ qua khi đếm.
   //
-  // (B) Gõ thẳng cụm chữ Hán (cách cũ, vẫn dùng được):
+  //     Muốn pinyin cũng được tô màu cùng cụm, ghi thêm ":số từ pinyin" sau
+  //     số ký tự Hán, cách nhau bởi dấu ":" — vd câu "在这里喝还是带走?" có
+  //     pinyin "Zài zhèlǐ hē háishì dàizǒu?": cụm "在这里" (3 chữ) ứng với
+  //     2 từ pinyin "Zài zhèlǐ" (vì "这里" viết liền thành 1 từ "zhèlǐ"):
+  //       3:2=tại chỗ;1:1=uống;2:1=hay là;2:1=mang đi
+  //     Không ghi ":P" thì cụm đó vẫn tô hanzi + nghĩa, chỉ riêng pinyin của
+  //     cụm đó không được tô (không lỗi gì cả).
+  //
+  // (B) Gõ thẳng cụm chữ Hán (cách cũ, vẫn dùng được, không hỗ trợ tô pinyin):
   //     好的=được;热的=nóng;还是=hay;冰的=đá
   //
-  // App tự nhận diện: nếu phần bên trái dấu "=" của mục ĐẦU TIÊN là số thì
-  // hiểu cả ô đó theo cách (A), ngược lại hiểu theo cách (B). Không trộn 2
-  // cách trong cùng 1 ô.
+  // App tự nhận diện: nếu phần bên trái dấu "=" của mục ĐẦU TIÊN là số (có
+  // thể kèm ":P") thì hiểu cả ô đó theo cách (A), ngược lại hiểu theo cách
+  // (B). Không trộn 2 cách trong cùng 1 ô. Chỉ tô MÀU CHỮ, không tô nền.
   const ALIGN_COLORS = ["#E8888A", "#4E9C7C", "#9B7FD1", "#C99A2E", "#4A90C4", "#D17FAE", "#8A7355", "#3FA8A0"];
 
   function isHanziChar(ch) {
@@ -165,27 +173,40 @@
   // Chuyển danh sách {left, vi} thành {zh, vi} thật, xử lý cả 2 định dạng ở trên.
   // "sentence" luôn là câu tiếng Trung gốc (item.hanzi), dùng để tính vị trí
   // ký tự khi ở chế độ đếm số.
-  function resolveAlignPairs(sentence, rawPairs) {
+  // Format mỗi cụm: "H" hoặc "H:P" (H = số ký tự Hán, P = số "từ" pinyin
+  // cách nhau bởi khoảng trắng - vd 这里 gộp thành 1 từ "zhèlǐ" nên P=1 dù H=2).
+  // P không bắt buộc - thiếu thì cụm đó chỉ tô hanzi+nghĩa, không tô pinyin.
+  function resolveAlignPairs(sentence, pinyinStr, rawPairs) {
     if (rawPairs.length === 0) return [];
-    const countMode = /^\d+$/.test(rawPairs[0].left);
+    const countMode = /^\d+(:\d+)?$/.test(rawPairs[0].left);
     if (!countMode) {
-      return rawPairs.map((p) => ({ zh: p.left, vi: p.vi }));
+      return rawPairs.map((p) => ({ zh: p.left, vi: p.vi, pinyin: "" }));
     }
     const text = (sentence || "").toString();
     const hanziPositions = [];
     for (let i = 0; i < text.length; i++) {
       if (isHanziChar(text[i])) hanziPositions.push(i);
     }
-    let cursor = 0;
+    const pinyinTokens = (pinyinStr || "").toString().trim().split(/\s+/).filter(Boolean);
+    let hCursor = 0;
+    let pCursor = 0;
     const resolved = [];
     rawPairs.forEach((p) => {
-      const count = parseInt(p.left, 10) || 0;
-      if (count <= 0 || cursor >= hanziPositions.length) return;
-      const startPos = hanziPositions[cursor];
-      const endCursorIdx = Math.min(cursor + count, hanziPositions.length) - 1;
+      const parts = p.left.split(":");
+      const hCount = parseInt(parts[0], 10) || 0;
+      const pCount = parts.length > 1 ? parseInt(parts[1], 10) || 0 : 0;
+      if (hCount <= 0 || hCursor >= hanziPositions.length) return;
+      const startPos = hanziPositions[hCursor];
+      const endCursorIdx = Math.min(hCursor + hCount, hanziPositions.length) - 1;
       const endPos = hanziPositions[endCursorIdx];
-      resolved.push({ zh: text.slice(startPos, endPos + 1), vi: p.vi });
-      cursor += count;
+      let pinyinChunk = "";
+      if (pCount > 0 && pCursor < pinyinTokens.length) {
+        const pEndIdx = Math.min(pCursor + pCount, pinyinTokens.length);
+        pinyinChunk = pinyinTokens.slice(pCursor, pEndIdx).join(" ");
+        pCursor += pCount;
+      }
+      resolved.push({ zh: text.slice(startPos, endPos + 1), vi: p.vi, pinyin: pinyinChunk });
+      hCursor += hCount;
     });
     return resolved;
   }
@@ -212,7 +233,7 @@
       if (m.start < pos) return; // bỏ qua nếu chồng lấn với cụm trước
       const color = ALIGN_COLORS[m.colorIndex % ALIGN_COLORS.length];
       html += escapeHtml(text.slice(pos, m.start));
-      html += `<span class="align-chunk" style="background:${color}26;border-bottom:2px solid ${color};color:${color}">${escapeHtml(text.slice(m.start, m.end))}</span>`;
+      html += `<span class="align-chunk" style="color:${color}">${escapeHtml(text.slice(m.start, m.end))}</span>`;
       pos = m.end;
     });
     html += escapeHtml(text.slice(pos));
@@ -228,12 +249,17 @@
       el.textContent = text || "";
       return;
     }
-    const resolved = resolveAlignPairs(item.hanzi, rawPairs);
+    const resolved = resolveAlignPairs(item.hanzi, item.pinyin, rawPairs);
     if (resolved.length === 0) {
       el.textContent = text || "";
       return;
     }
-    const values = resolved.map((p) => (p.vi ? (side === "hanzi" ? p.zh : p.vi) : ""));
+    const values = resolved.map((p) => {
+      if (!p.vi) return "";
+      if (side === "hanzi") return p.zh;
+      if (side === "pinyin") return p.pinyin;
+      return p.vi;
+    });
     el.innerHTML = highlightSegments(text, values);
   }
 
@@ -790,7 +816,11 @@
 
     if (isHanzi) {
       const showPinyin = els.pinyinToggle.checked && (item.pinyin || "").toString().trim();
-      faceEls.extraLine.textContent = showPinyin ? item.pinyin : "";
+      if (showPinyin) {
+        setHighlightedText(faceEls.extraLine, item.pinyin, item, "pinyin");
+      } else {
+        faceEls.extraLine.textContent = "";
+      }
       faceEls.extraLine.classList.toggle("hidden", !showPinyin);
     } else {
       const showHanViet = els.hanVietToggle.checked && (item.hanViet || "").toString().trim();
