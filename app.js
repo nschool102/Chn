@@ -125,28 +125,29 @@
   }
 
   // ================= Tô màu cụm từ ghép cặp Trung-Việt =================
-  // Cột ALIGN (sheet GIAO TIẾP) / EXAMPLE ALIGN (sheet HSK) hỗ trợ 2 cách ghi:
+  // Cột ALIGN (sheet GIAO TIẾP) / EXAMPLE ALIGN (sheet HSK) — mỗi cụm cách
+  // nhau bởi dấu "|". Hỗ trợ 2 cách ghi trong mỗi cụm:
   //
-  // (A) Đếm số ký tự (khuyên dùng - gọn, không lo gõ sai cụm chữ Hán):
-  //     1=được;2=tổng cộng;4=35 tệ
+  // (A) Đếm số ký tự (khuyên dùng - đúng định dạng form nhập liệu tạo ra):
+  //     1=được|2=tổng cộng|4=35 tệ
   //     Nghĩa là: 1 ký tự Hán đầu tiên = "được", 2 ký tự kế tiếp = "tổng cộng",
   //     4 ký tự cuối = "35 tệ". Dấu câu (,.?!...) tự động bị bỏ qua khi đếm.
   //
-  //     Muốn pinyin cũng được tô màu cùng cụm, ghi thêm ":số từ pinyin" sau
-  //     số ký tự Hán, cách nhau bởi dấu ":" — vd câu "在这里喝还是带走?" có
-  //     pinyin "Zài zhèlǐ hē háishì dàizǒu?": cụm "在这里" (3 chữ) ứng với
-  //     2 từ pinyin "Zài zhèlǐ" (vì "这里" viết liền thành 1 từ "zhèlǐ"):
-  //       3:2=tại chỗ;1:1=uống;2:1=hay là;2:1=mang đi
-  //     Không ghi ":P" thì cụm đó vẫn tô hanzi + nghĩa, chỉ riêng pinyin của
+  //     Muốn pinyin cũng được tô màu cùng cụm, ghi thêm ";số từ pinyin" sau
+  //     số ký tự Hán — vd câu "在这里喝还是带走?" có pinyin
+  //     "Zài zhèlǐ hē háishì dàizǒu?": cụm "在这里" (3 chữ) ứng với 2 từ
+  //     pinyin "Zài zhèlǐ" (vì "这里" viết liền thành 1 từ "zhèlǐ"):
+  //       3;2=tại chỗ|1;1=uống|2;1=hay là|2;1=mang đi
+  //     Không ghi ";P" thì cụm đó vẫn tô hanzi + nghĩa, chỉ riêng pinyin của
   //     cụm đó không được tô (không lỗi gì cả).
   //
   // (B) Gõ thẳng cụm chữ Hán (cách cũ, vẫn dùng được, không hỗ trợ tô pinyin):
-  //     好的=được;热的=nóng;还是=hay;冰的=đá
+  //     好的=được|热的=nóng|还是=hay|冰的=đá
   //
   // App tự nhận diện: nếu phần bên trái dấu "=" của mục ĐẦU TIÊN là số (có
-  // thể kèm ":P") thì hiểu cả ô đó theo cách (A), ngược lại hiểu theo cách
+  // thể kèm ";P") thì hiểu cả ô đó theo cách (A), ngược lại hiểu theo cách
   // (B). Không trộn 2 cách trong cùng 1 ô. Chỉ tô MÀU CHỮ, không tô nền.
-  const ALIGN_COLORS = ["#E8888A", "#4E9C7C", "#9B7FD1", "#C99A2E", "#4A90C4", "#D17FAE", "#8A7355", "#3FA8A0"];
+  const ALIGN_COLORS = ["#C2255C", "#2B8A3E", "#7048E8", "#B8860B", "#1971C2", "#AE3EC9", "#8B5E34", "#0C8599"];
 
   function isHanziChar(ch) {
     return ch >= "\u4e00" && ch <= "\u9fff";
@@ -156,7 +157,7 @@
     if (!alignStr) return [];
     return alignStr
       .toString()
-      .split(";")
+      .split("|")
       .map((pair) => {
         const idx = pair.indexOf("=");
         if (idx === -1) return null;
@@ -173,12 +174,12 @@
   // Chuyển danh sách {left, vi} thành {zh, vi} thật, xử lý cả 2 định dạng ở trên.
   // "sentence" luôn là câu tiếng Trung gốc (item.hanzi), dùng để tính vị trí
   // ký tự khi ở chế độ đếm số.
-  // Format mỗi cụm: "H" hoặc "H:P" (H = số ký tự Hán, P = số "từ" pinyin
+  // Format mỗi cụm: "H" hoặc "H;P" (H = số ký tự Hán, P = số "từ" pinyin
   // cách nhau bởi khoảng trắng - vd 这里 gộp thành 1 từ "zhèlǐ" nên P=1 dù H=2).
   // P không bắt buộc - thiếu thì cụm đó chỉ tô hanzi+nghĩa, không tô pinyin.
   function resolveAlignPairs(sentence, pinyinStr, rawPairs) {
     if (rawPairs.length === 0) return [];
-    const countMode = /^\d+(:\d+)?$/.test(rawPairs[0].left);
+    const countMode = /^\d+(;\d+)?$/.test(rawPairs[0].left);
     if (!countMode) {
       return rawPairs.map((p) => ({ zh: p.left, vi: p.vi, pinyin: "" }));
     }
@@ -192,7 +193,7 @@
     let pCursor = 0;
     const resolved = [];
     rawPairs.forEach((p) => {
-      const parts = p.left.split(":");
+      const parts = p.left.split(";");
       const hCount = parseInt(parts[0], 10) || 0;
       const pCount = parts.length > 1 ? parseInt(parts[1], 10) || 0 : 0;
       if (hCount <= 0 || hCursor >= hanziPositions.length) return;
