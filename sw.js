@@ -1,4 +1,4 @@
-const CACHE_NAME = "hsk-app-cache-v20";
+const CACHE_NAME = "hsk-app-cache-v21";
 const ASSETS = [
   "./",
   "./index.html",
