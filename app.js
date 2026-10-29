@@ -291,6 +291,7 @@
     frontHanVietLine: $("frontHanVietLine"), backPinyinLine: $("backPinyinLine"),
     flashcardPractice: $("flashcardPractice"), flashcardPracticeArea: $("flashcardPracticeArea"),
     speakFrontBtn: $("speakFrontBtn"), speakBackBtn: $("speakBackBtn"),
+    autoSpeakToggle: $("autoSpeakToggle"),
     prevBtn: $("prevBtn"), nextBtn: $("nextBtn"),
     quizStart: $("quizStart"), quizStartError: $("quizStartError"), startQuizBtn: $("startQuizBtn"),
     quizSession: $("quizSession"), quizProgressLabel: $("quizProgressLabel"),
@@ -318,31 +319,56 @@
 
   // ================= Text-to-speech =================
   let zhVoice = null;
+  let viVoice = null;
+  let viMissingWarned = false;
+  function normLang(l) { return (l || "").toLowerCase().replace("_", "-"); }
   function pickVoice() {
     if (!("speechSynthesis" in window)) return;
     const voices = speechSynthesis.getVoices();
     zhVoice =
-      voices.find((v) => v.lang === "zh-CN") ||
-      voices.find((v) => v.lang && v.lang.startsWith("zh")) ||
+      voices.find((v) => normLang(v.lang) === "zh-cn") ||
+      voices.find((v) => normLang(v.lang).startsWith("zh")) ||
+      null;
+    viVoice =
+      voices.find((v) => normLang(v.lang) === "vi-vn") ||
+      voices.find((v) => normLang(v.lang).startsWith("vi")) ||
       null;
   }
   if ("speechSynthesis" in window) {
     pickVoice();
     speechSynthesis.onvoiceschanged = pickVoice;
   }
-  function speak(text) {
+  // lang: "zh" (mặc định) hoặc "vi"
+  function speak(text, lang) {
     if (!text) return;
     if (!("speechSynthesis" in window)) {
       showToast("Trình duyệt không hỗ trợ phát âm");
       return;
     }
+    const isVi = lang === "vi";
+    if (isVi) pickVoice();
+    if (isVi && !viVoice && !viMissingWarned) {
+      viMissingWarned = true;
+      showToast("Thiết bị chưa có giọng tiếng Việt — vẫn thử đọc");
+    }
     speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "zh-CN";
-    utter.rate = 0.85;
-    if (zhVoice) utter.voice = zhVoice;
+    const utter = new SpeechSynthesisUtterance(String(text));
+    utter.lang = isVi ? "vi-VN" : "zh-CN";
+    utter.rate = isVi ? 1.0 : 0.85;
+    const voice = isVi ? viVoice : zhVoice;
+    if (voice) utter.voice = voice;
     speechSynthesis.speak(utter);
   }
+
+  // Tự động đọc flashcard (bật/tắt, nhớ lựa chọn)
+  const AUTO_SPEAK_KEY = "hsk-app-auto-speak";
+  const storedAutoSpeak = localStorage.getItem(AUTO_SPEAK_KEY);
+  els.autoSpeakToggle.checked = storedAutoSpeak === null ? true : storedAutoSpeak === "1";
+  els.autoSpeakToggle.addEventListener("change", () => {
+    localStorage.setItem(AUTO_SPEAK_KEY, els.autoSpeakToggle.checked ? "1" : "0");
+    if (els.autoSpeakToggle.checked) speakVisibleFace();
+    else if ("speechSynthesis" in window) speechSynthesis.cancel();
+  });
 
   // ================= Handwriting pad (canvas dự phòng) =================
   const HANDWRITE_KEY = "hsk-app-handwrite";
@@ -900,10 +926,32 @@
     }
   }
 
+  // Đọc mặt thẻ đang hiển thị: mặt chữ Hán -> tiếng Trung, mặt nghĩa -> tiếng Việt
+  function faceSpeech(entry, side) {
+    const kind = side === "front"
+      ? (entry.reversed ? "hanzi" : "meaning")
+      : (entry.reversed ? "meaning" : "hanzi");
+    return kind === "hanzi"
+      ? { text: entry.item.hanzi, lang: "zh" }
+      : { text: entry.item.meaning, lang: "vi" };
+  }
+  function speakFace(side) {
+    if (deck.length === 0) return;
+    const f = faceSpeech(deck[cardIndex], side);
+    speak(f.text, f.lang);
+  }
+  function speakVisibleFace() {
+    speakFace(cardIsFlipped ? "back" : "front");
+  }
+  function autoSpeakVisibleFace() {
+    if (els.autoSpeakToggle.checked) speakVisibleFace();
+  }
+
   function goToCard(i) {
     if (deck.length === 0) return;
     cardIndex = (i + deck.length) % deck.length;
     renderCard();
+    autoSpeakVisibleFace();
   }
 
   // ================= Quiz =================
@@ -1282,6 +1330,7 @@
     const view = btn.dataset.view;
     els.viewCard.classList.toggle("hidden", view !== "card");
     els.viewQuiz.classList.toggle("hidden", view !== "quiz");
+    if (view === "quiz" && "speechSynthesis" in window) speechSynthesis.cancel();
     if (view === "quiz") {
       els.quizSession.classList.add("hidden");
       els.quizDone.classList.add("hidden");
@@ -1293,21 +1342,21 @@
   els.shuffleBtn.addEventListener("click", () => {
     buildFlashcardDeck();
     showToast("Đã xáo trộn bộ thẻ");
+    autoSpeakVisibleFace();
   });
   els.flashcard.addEventListener("click", () => {
     cardIsFlipped = !cardIsFlipped;
     els.flashcard.classList.toggle("flipped", cardIsFlipped);
     updatePracticeArea();
+    autoSpeakVisibleFace();
   });
   els.speakFrontBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (deck.length === 0) return;
-    speak(deck[cardIndex].item.hanzi);
+    speakFace("front");
   });
   els.speakBackBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (deck.length === 0) return;
-    speak(deck[cardIndex].item.hanzi);
+    speakFace("back");
   });
   els.prevBtn.addEventListener("click", () => goToCard(cardIndex - 1));
   els.nextBtn.addEventListener("click", () => goToCard(cardIndex + 1));
